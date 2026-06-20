@@ -761,10 +761,21 @@ const DB = (function () {
 /* ============ RICO GAMES ERP — Sincronização na nuvem (Supabase) ============
    Mantém o sistema funcionando offline (localStorage) e, quando configurado,
    espelha todo o estado num banco na nuvem para acesso de qualquer lugar. */
+/* Nuvem embutida: preencha url e key para conectar automaticamente em TODOS os aparelhos
+   (sem precisar configurar cada um). A "key" é a chave anon (pública) do Supabase. */
+const CLOUD_DEFAULT = {
+  url: 'https://irzogxqfnfduaqqpbxwc.supabase.co',
+  key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlyem9neHFmbmZkdWFxcXBieHdjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NTc4MjYsImV4cCI6MjA5NzUzMzgyNn0.sEc3nWebaWqgjOWsREtAahUtEbcAKzdh37NVI_PwoCI'
+};
+
 const Cloud = {
   pushTimer: null, syncTimer: null, pushing: false,
 
-  cfg() { try { return JSON.parse(localStorage.getItem('rg_cloud')); } catch (e) { return null; } },
+  cfg() {
+    try { const s = JSON.parse(localStorage.getItem('rg_cloud')); if (s && s.url && s.key) return s; } catch (e) { }
+    if (CLOUD_DEFAULT.url && CLOUD_DEFAULT.key) return CLOUD_DEFAULT;
+    return null;
+  },
   configured() { const c = this.cfg(); return !!(c && c.url && c.key); },
   setCfg(url, key) { localStorage.setItem('rg_cloud', JSON.stringify({ url: String(url).replace(/\/+$/, ''), key: String(key).trim() })); },
   clear() { localStorage.removeItem('rg_cloud'); this.stop(); this.status('Offline · salvo localmente', null); },
@@ -4100,7 +4111,6 @@ const App = {
     }
     // login persistence (sessão)
     if (sessionStorage.getItem('rg_logged') === '1') this.showApp();
-    document.getElementById('login-pass').addEventListener('keydown', e => { if (e.key === 'Enter') App.login(); });
     // nav binding
     document.querySelectorAll('.nav-item[data-route]').forEach(a => {
       a.addEventListener('click', () => App.go(a.dataset.route));
@@ -4109,16 +4119,47 @@ const App = {
 
   renderAuth() {
     const form = document.getElementById('login-form'); if (!form) return;
+    const sub = document.querySelector('.login-sub');
+    const cloudLink = `<div style="text-align:center;margin-top:12px"><a style="font-size:12.5px;color:var(--green);cursor:pointer" onclick="App.loginCloud()">☁️ Conectar à nuvem (configurar este aparelho)</a></div>`;
     if (DB.all('usuarios').length === 0) {
-      const sub = document.querySelector('.login-sub'); if (sub) sub.textContent = 'Primeiro acesso — crie a conta do administrador';
+      if (sub) sub.textContent = 'Primeiro acesso — crie a conta do administrador';
       form.innerHTML = `
         <label>Seu nome</label><input id="su-nome" autocomplete="off" />
         <label>Usuário (login)</label><input id="su-user" autocomplete="off" />
         <label>Senha</label><input id="su-pass" type="password" />
         <label>Confirmar senha</label><input id="su-pass2" type="password" onkeydown="if(event.key==='Enter')App.createOwner()" />
         <button class="btn-primary btn-block" onclick="App.createOwner()">Criar administrador</button>
-        <div class="login-hint">Esta será a conta do dono (acesso total ao sistema).</div>`;
+        <div class="login-hint">Esta será a conta do dono (acesso total ao sistema).</div>
+        ${cloudLink}`;
+    } else {
+      if (sub) sub.textContent = 'Sistema de Gestão · ERP & PDV';
+      form.innerHTML = `
+        <label>Usuário</label><input id="login-user" type="text" autocomplete="off" />
+        <label>Senha</label><input id="login-pass" type="password" onkeydown="if(event.key==='Enter')App.login()" />
+        <button class="btn-primary btn-block" onclick="App.login()">Entrar</button>
+        <div class="login-hint">Entre com seu usuário e senha.</div>
+        ${cloudLink}`;
     }
+  },
+  loginCloud() {
+    const c = (typeof Cloud !== 'undefined' && Cloud.cfg()) || {};
+    Modal.open({
+      title: '☁️ Conectar à nuvem',
+      body: `<p style="color:var(--txt-2);margin-bottom:14px;line-height:1.6">Cole a URL e a chave do Supabase para este aparelho baixar os dados da loja (usuários, produtos, vendas...). Depois é só entrar com seu usuário e senha.</p>
+        <div class="field" style="margin-bottom:12px"><label>URL do projeto Supabase</label><input id="lc-url" value="${esc(c.url || '')}" placeholder="https://xxxx.supabase.co"></div>
+        <div class="field"><label>Chave pública (anon)</label><input id="lc-key" value="${esc(c.key || '')}" placeholder="eyJ..."></div>`,
+      foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="App.loginCloudSave()">Conectar e baixar</button>`
+    });
+  },
+  async loginCloudSave() {
+    const url = fval('lc-url'), key = fval('lc-key');
+    if (!url || !key) return Toast.err('Cole a URL e a chave do Supabase.');
+    Cloud.setCfg(url, key); Toast.ok('Conectando…');
+    const ok = await Cloud.test();
+    if (!ok) { Toast.err('Não consegui conectar. Confira a URL, a chave e se a tabela "erp_state" existe.'); return; }
+    await Cloud.initialSync(); Cloud.start();
+    Modal.close(); this.renderAuth();
+    Toast.ok('Conectado! Agora entre com seu usuário e senha.');
   },
   createOwner() {
     const nome = document.getElementById('su-nome').value.trim();
