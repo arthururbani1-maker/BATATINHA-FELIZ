@@ -142,7 +142,7 @@ Modules.vdRender = function () {
 
 Modules.vdDetail = function (id) {
   const v = DB.get('vendas', id); if (!v) return;
-  const itensHtml = v.itens.map(i => `<tr><td>${esc(i.nome)}</td><td class="num">${i.qtd}</td><td class="num">${Fmt.brl(i.preco)}</td><td class="num strong">${Fmt.brl(i.preco * i.qtd)}</td></tr>`).join('');
+  const itensHtml = v.itens.map(i => `<tr><td>${esc(i.nome)}${i.precoOriginal != null && i.preco !== i.precoOriginal ? `<div class="muted" style="font-size:11px">preço alterado: <s>${Fmt.brl(i.precoOriginal)}</s> → ${Fmt.brl(i.preco)}${i.precoMotivo ? ' · ' + esc(i.precoMotivo) : ''}</div>` : ''}</td><td class="num">${i.qtd}</td><td class="num">${Fmt.brl(i.preco)}</td><td class="num strong">${Fmt.brl(i.preco * i.qtd)}</td></tr>`).join('');
   Modal.open({
     title: '🧾 Venda #' + id.slice(-4) + (v.cancelada ? ' — CANCELADA' : ''),
     body: `
@@ -159,11 +159,30 @@ Modules.vdDetail = function (id) {
         ${App.canFinance() ? `<div class="mini-stat"><span>Lucro da operação</span><b style="color:var(--green)">${Fmt.brl(v.lucro)}</b></div>` : ''}
       </div>`,
     foot: v.cancelada
-      ? `<span class="badge b-red" style="margin-right:auto">Venda cancelada em ${Fmt.date(v.canceladaEm || v.data)}</span><button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
-      : `${App.can('podeCancelar') ? `<button class="btn-danger" style="margin-right:auto" onclick="Modules.vdCancel('${id}')">✕ Cancelar venda</button>` : ''}<button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
+      ? `<span class="badge b-red" style="margin-right:auto">Venda cancelada em ${Fmt.date(v.canceladaEm || v.data)}</span>${typeof Print !== 'undefined' ? `<button class="btn-ghost" onclick="Print.print(DB.get('vendas','${id}'))">🖨️ Reimprimir</button>` : ''}<button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
+      : `${App.can('podeCancelar') ? `<button class="btn-danger" style="margin-right:auto" onclick="Modules.vdCancel('${id}')">✕ Cancelar venda</button>` : ''}${App.isAdmin() ? `<button class="btn-ghost" onclick="Modules.vdGarantia('${id}')">🛡️ Garantia</button>` : ''}${typeof Print !== 'undefined' ? `<button class="btn-ghost" onclick="Print.print(DB.get('vendas','${id}'))">🖨️ Reimprimir cupom</button>` : ''}<button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
   });
 };
 
+Modules.vdGarantia = function (id) {
+  const v = DB.get('vendas', id); if (!v) return;
+  if (!v.cupom && typeof Cupom !== 'undefined') v.cupom = Cupom.snapshot(v);
+  const at = (v.cupom && v.cupom.itens[0]) || { prazo: 90, unidade: 'dias' };
+  Modal.open({
+    title: '🛡️ Ajustar garantia desta venda',
+    body: `<p class="muted" style="margin-bottom:12px">Vale só para esta venda (e para a reimpressão do cupom).</p>
+      <div class="form-grid"><div class="field"><label>Prazo</label><input id="vg-prazo" type="number" value="${at.prazo}"></div>
+      <div class="field"><label>Unidade</label><select id="vg-un"><option ${at.unidade === 'dias' ? 'selected' : ''}>dias</option><option ${at.unidade === 'meses' ? 'selected' : ''}>meses</option></select></div></div>`,
+    foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.vdGarantiaSave('${id}')">Aplicar</button>`
+  });
+};
+Modules.vdGarantiaSave = function (id) {
+  const v = DB.get('vendas', id); const prazo = parseInt(fval('vg-prazo')) || 0, un = fval('vg-un');
+  const snap = v.cupom || (typeof Cupom !== 'undefined' ? Cupom.snapshot(v) : { cfg: {}, itens: [] });
+  const itens = (snap.itens || []).map(i => Object.assign({}, i, { prazo, unidade: un }));
+  DB.update('vendas', id, { cupom: Object.assign({}, snap, { itens }) });
+  Modal.close(); Toast.ok('Garantia ajustada para esta venda.');
+};
 Modules.vdCancel = function (id) {
   if (!App.can('podeCancelar')) return Toast.err('Você não tem permissão para cancelar vendas.');
   Modal.confirm('Cancelar esta venda? O estoque será devolvido, o faturamento estornado e o lucro/relatórios atualizados automaticamente.', () => {
@@ -173,6 +192,10 @@ Modules.vdCancel = function (id) {
     DB.update('vendas', id, { cancelada: true, canceladaEm: new Date().toISOString() });
     const fin = DB.all('financeiro').find(f => f.refId === id && f.origem === 'venda');
     if (fin) DB.remove('financeiro', fin.id);
+    // se houve usado recebido na troca: devolve a unidade somada ao produto e estorna o custo
+    if (v.usado && v.usado.produtoId) { const p = DB.get('produtos', v.usado.produtoId); if (p) DB.update('produtos', v.usado.produtoId, { qtd: Math.max(0, p.qtd - 1) }); }
+    DB.all('produtos').filter(p => p.vendaOrigemId === id).forEach(p => DB.remove('produtos', p.id));
+    DB.all('financeiro').filter(f => f.refId === id && f.origem === 'usado').forEach(f => DB.remove('financeiro', f.id));
     // se foi paga em dinheiro, estorna o Caixa da Loja
     if (typeof Caixa !== 'undefined') Caixa.estornarVenda(v);
     DB.logMov('devolucao', 'Venda cancelada #' + id.slice(-4) + ' — estoque devolvido e faturamento estornado (' + Fmt.brl(v.total) + ')', { valor: v.total });

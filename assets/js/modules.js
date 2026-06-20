@@ -117,7 +117,7 @@ const Modules = {
     const canEd = App.can('podeEditarProduto'), canFin = App.canFinance();
     return `
     <div class="page-head"><div><h1>Estoque</h1><p>${prods.length} produtos cadastrados · ${Calc.estoqueUnidades()} unidades${canFin ? ' · ' + Fmt.brl(Calc.estoqueValorCusto()) + ' em custo' : ''}</p></div>
-      <div class="actions">${canEd ? '<button class="btn-ghost" onclick="Modules.ajusteEstoque()">⚖️ Ajuste</button><button class="btn-primary" onclick="Modules.produtoForm()">+ Novo produto</button>' : ''}</div></div>
+      <div class="actions">${canEd ? '<button class="btn-ghost" onclick="Modules.ajusteEstoque()">⚖️ Ajuste</button><button class="btn-ghost" onclick="App.go(\'entrada\')">📥 Entrada de estoque</button><button class="btn-primary" onclick="Modules.produtoForm()">+ Novo produto</button>' : ''}</div></div>
     <div class="toolbar">
       <input class="grow" id="est-search" placeholder="Buscar nome, SKU ou código..." oninput="Modules.renderEstoqueTable()" />
       <select id="est-cat" onchange="Modules.renderEstoqueTable()"><option value="">Todas categorias</option>${cats.map(c => `<option>${c}</option>`).join('')}</select>
@@ -216,6 +216,97 @@ const Modules = {
     Toast.ok('Estoque ajustado.'); Modal.close(); App.go('estoque');
   },
 
+  /* ===================== ENTRADA DE ESTOQUE ===================== */
+  entradaLines: [],
+  entrada() {
+    this.entradaLines = [];
+    setTimeout(() => { const e = document.getElementById('ent-busca'); if (e) e.focus(); this.entRender(); }, 30);
+    const fs = DB.all('fornecedores');
+    return `
+    <div class="page-head"><div><h1>Entrada de Estoque</h1><p>Reabasteça produtos já cadastrados — sem cadastrar de novo</p></div>
+      <div class="actions"><button class="btn-ghost" onclick="App.go('estoque')">📦 Ver estoque</button></div></div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="section-title">1. Busque o produto</div>
+      <div class="ms" style="max-width:560px">
+        <div class="ms-box"><span class="ic" style="color:var(--txt-3);padding-left:4px">🔎</span>
+          <input class="ms-input" id="ent-busca" autocomplete="off" placeholder="Digite o nome, SKU ou código de barras (ex: cont...)" oninput="Modules.entBusca()" onfocus="Modules.entBusca()" onblur="Modules.entBlur()"></div>
+        <div class="ms-drop" id="ent-drop"></div>
+      </div>
+      <p class="muted" style="margin-top:8px;font-size:12px">Comece a digitar e selecione o produto na lista. Não está cadastrado? <a style="color:var(--green);cursor:pointer" onclick="App.go('estoque');setTimeout(()=>Modules.produtoForm(),120)">Cadastrar novo produto</a>.</p>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="section-title">2. Dados da entrada</div>
+      <div class="form-grid">
+        <div class="field"><label>Fornecedor (opcional)</label><select id="ent-forn"><option value="">—</option>${fs.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}</select></div>
+        <div class="field"><label>Data da entrada</label><input id="ent-data" type="date" value="${new Date().toISOString().slice(0, 10)}"></div>
+        <div class="field full"><label>Observação</label><input id="ent-obs" placeholder="Ex: nota fiscal, lote, etc."></div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--txt-2)"><input type="checkbox" id="ent-fin"> Também lançar como compra no Financeiro (contas a pagar)</label>
+    </div>
+    <div class="card">
+      <div class="section-title">3. Produtos a dar entrada</div>
+      <div id="ent-lines"></div>
+      <div id="ent-resumo"></div>
+      <button class="btn-primary btn-block" style="margin-top:14px" onclick="Modules.entSalvar()">✅ Confirmar entrada no estoque</button>
+    </div>`;
+  },
+  entBusca() {
+    const q = (fval('ent-busca') || '').toLowerCase();
+    const drop = document.getElementById('ent-drop'); if (!drop) return;
+    let list = DB.all('produtos').filter(p => !this.entradaLines.some(l => l.produtoId === p.id));
+    if (q) list = list.filter(p => p.nome.toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q) || (p.barcode || '').includes(q));
+    list = list.slice(0, 10);
+    drop.innerHTML = list.length
+      ? list.map(p => `<div class="ms-opt" onmousedown="event.preventDefault();Modules.entAddLine('${p.id}')"><span>${esc(p.nome)} ${condBadge(p.condicao)}</span><span class="o-sku">${p.sku} · ${p.qtd} un</span></div>`).join('')
+      : '<div class="ms-empty">Nenhum produto encontrado. Cadastre-o primeiro em Estoque.</div>';
+    drop.classList.add('show');
+  },
+  entBlur() { setTimeout(() => { const d = document.getElementById('ent-drop'); if (d) d.classList.remove('show'); }, 160); },
+  entAddLine(id) {
+    const p = DB.get('produtos', id); if (!p) return;
+    if (!this.entradaLines.some(l => l.produtoId === id)) this.entradaLines.push({ produtoId: id, nome: p.nome, sku: p.sku, qtd: 1, custo: p.custoMedio || p.custo || 0 });
+    const inp = document.getElementById('ent-busca'); if (inp) { inp.value = ''; inp.focus(); }
+    this.entBusca(); this.entRender();
+  },
+  entSetLine(i, f, v) { this.entradaLines[i][f] = parseFloat(String(v).replace(',', '.')) || 0; this.entRender(); },
+  entDelLine(i) { this.entradaLines.splice(i, 1); this.entRender(); },
+  entRender() {
+    const box = document.getElementById('ent-lines'); if (!box) return;
+    if (!this.entradaLines.length) { box.innerHTML = '<p class="muted" style="padding:6px 0">Nenhum produto adicionado. Use a busca acima.</p>'; document.getElementById('ent-resumo').innerHTML = ''; return; }
+    box.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Produto</th><th class="num">Estoque atual</th><th class="num">Quantidade</th><th class="num">Custo unitário</th><th class="num">Subtotal</th><th></th></tr></thead>
+      <tbody>${this.entradaLines.map((l, i) => { const p = DB.get('produtos', l.produtoId) || {}; return `<tr>
+        <td class="strong">${esc(l.nome)}<div class="muted" style="font-size:11px">${l.sku}</div></td>
+        <td class="num muted">${p.qtd != null ? p.qtd : '-'}</td>
+        <td class="num"><input type="number" min="1" value="${l.qtd}" style="width:80px;text-align:right;background:var(--bg-2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:7px 9px" onchange="Modules.entSetLine(${i},'qtd',this.value)"></td>
+        <td class="num"><input type="number" step="0.01" value="${l.custo}" style="width:110px;text-align:right;background:var(--bg-2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:7px 9px" onchange="Modules.entSetLine(${i},'custo',this.value)"></td>
+        <td class="num strong">${Fmt.brl(l.qtd * l.custo)}</td>
+        <td class="num"><span class="ci-rm" onclick="Modules.entDelLine(${i})">✕</span></td></tr>`; }).join('')}</tbody></table></div>`;
+    const totQ = this.entradaLines.reduce((s, l) => s + l.qtd, 0), totV = this.entradaLines.reduce((s, l) => s + l.qtd * l.custo, 0);
+    document.getElementById('ent-resumo').innerHTML = `<div class="card" style="background:var(--bg-2);margin-top:14px">
+      <div class="mini-stat"><span>Total de itens</span><b>${totQ} un</b></div>
+      <div class="mini-stat" style="font-size:16px"><span class="strong">Custo total da entrada</span><b style="color:var(--green)">${Fmt.brl(totV)}</b></div></div>`;
+  },
+  entSalvar() {
+    if (!this.entradaLines.length) return Toast.err('Adicione ao menos um produto.');
+    if (this.entradaLines.some(l => l.qtd <= 0)) return Toast.err('Quantidade deve ser maior que zero.');
+    const fornId = fval('ent-forn'), data = new Date(fval('ent-data') + 'T12:00:00').toISOString(), obs = fval('ent-obs');
+    const fornNome = fornId ? (DB.get('fornecedores', fornId) || {}).nome : '';
+    let totV = 0;
+    this.entradaLines.forEach(l => {
+      const p = DB.get('produtos', l.produtoId); if (!p) return;
+      const qtdNova = p.qtd + l.qtd;
+      const custoMedio = qtdNova ? (((p.custoMedio || p.custo || 0) * p.qtd) + (l.custo * l.qtd)) / qtdNova : l.custo;
+      DB.update('produtos', l.produtoId, { qtd: qtdNova, custo: l.custo, custoMedio: Math.round(custoMedio * 100) / 100, status: 'disponivel' });
+      DB.logMov('compra', 'Entrada de estoque: ' + l.qtd + 'x ' + l.nome + (fornNome ? ' (' + fornNome + ')' : '') + (obs ? ' · ' + obs : ''), { valor: l.qtd * l.custo, data });
+      totV += l.qtd * l.custo;
+    });
+    if (fchk('ent-fin')) {
+      DB.logFin({ tipo: 'saida', categoria: 'Compras de mercadorias', subcategoria: 'Entrada de estoque', descricao: 'Entrada de estoque' + (fornNome ? ' — ' + fornNome : '') + (obs ? ' (' + obs + ')' : ''), valor: totV, emissao: data, vencimento: data, data, pago: 0, status: 'pendente', fornecedorId: fornId || null, formaPagamento: 'Boleto', origem: 'compra' });
+    }
+    Toast.ok('Entrada registrada! Estoque e custo médio atualizados.');
+    this.entradaLines = []; App.go('estoque');
+  },
+
   /* ===================== PDV ===================== */
   cart: { itens: [], desconto: 0, pagamentos: [], usado: null },
   pdv() {
@@ -263,7 +354,7 @@ const Modules = {
     const p = DB.get('produtos', id);
     const ex = this.cart.itens.find(i => i.produtoId === id);
     if (ex) { if (ex.qtd < p.qtd) ex.qtd++; else return Toast.warn('Estoque máximo atingido.'); }
-    else this.cart.itens.push({ produtoId: id, sku: p.sku, nome: p.nome, preco: p.preco, custo: p.custoMedio || p.custo, qtd: 1, max: p.qtd });
+    else this.cart.itens.push({ produtoId: id, sku: p.sku, nome: p.nome, preco: p.preco, precoOriginal: p.preco, custo: p.custoMedio || p.custo, qtd: 1, max: p.qtd });
     this.renderCart();
   },
   cartQty(id, d) {
@@ -287,7 +378,7 @@ const Modules = {
         ${c.itens.length ? c.itens.map(i => `
           <div class="cart-item">
             <span class="ci-thumb">${this.catIcon(i)}</span>
-            <div class="ci-name">${esc(i.nome)}<small>${Fmt.brl(i.preco)} un.</small></div>
+            <div class="ci-name">${esc(i.nome)}<small>${i.precoOriginal != null && i.preco !== i.precoOriginal ? `<s style="color:var(--txt-3)">${Fmt.brl(i.precoOriginal)}</s> ` : ''}${App.can('podeAlterarPreco') ? `<a style="color:var(--green);cursor:pointer" onclick="Modules.precoEdit('${i.produtoId}')">${Fmt.brl(i.preco)} ✎</a>` : Fmt.brl(i.preco)} un.${i.precoMotivo ? ' · ' + esc(i.precoMotivo) : ''}</small></div>
             <div class="qty"><button onclick="Modules.cartQty('${i.produtoId}',-1)">−</button><b>${i.qtd}</b><button onclick="Modules.cartQty('${i.produtoId}',1)">+</button></div>
             <div class="strong" style="width:74px;text-align:right">${Fmt.brl(i.preco * i.qtd)}</div>
             <span class="ci-rm" title="Remover" onclick="Modules.cartRemove('${i.produtoId}')">✕</span>
@@ -299,7 +390,6 @@ const Modules = {
         ${App.can('podeDesconto') ? `<div class="cart-line"><span>Desconto</span><span><input type="number" id="cart-desc" value="${c.desconto}" style="width:90px;text-align:right;background:var(--bg-2);border:1px solid var(--line);color:var(--txt);border-radius:7px;padding:4px 8px" oninput="Modules.setDesc(this.value)"></span></div>` : (c.desconto ? `<div class="cart-line"><span>Desconto</span><span>− ${Fmt.brl(c.desconto)}</span></div>` : '')}
         ${c.usado ? `<div class="cart-line"><span>Usado na troca</span><span style="color:var(--green)">− ${Fmt.brl(usadoVal)}</span></div>` : ''}
         <div class="cart-total"><span>Total</span><span class="val">${Fmt.brl(total)}</span></div>
-        ${c.itens.length && App.canFinance() ? `<div class="lucro-line"><span>💎 Lucro estimado</span><span>${Fmt.brl(lucro)}</span></div>` : ''}
         <button class="btn-ghost btn-block" style="margin-top:10px" onclick="Modules.addUsadoTroca()">🔄 Receber usado como pagamento</button>
         <button class="btn-primary btn-block" style="margin-top:8px" onclick="Modules.checkout()" ${c.itens.length ? '' : 'disabled style="opacity:.45;margin-top:8px"'}>Finalizar venda →</button>
       </div>`;
@@ -310,36 +400,135 @@ const Modules = {
   },
   cartRemove(id) { this.cart.itens = this.cart.itens.filter(i => i.produtoId !== id); this.renderCart(); },
   removeUsado() { this.cart.usado = null; this.renderCart(); },
-  setDesc(v) { this.cart.desconto = parseFloat(v) || 0; this.renderCart(); },
-  clearCart() { this.cart = { itens: [], desconto: 0, pagamentos: [], usado: null }; this.renderCart(); },
-  addUsadoTroca() {
+  precoEdit(id) {
+    if (!App.can('podeAlterarPreco')) return Toast.err('Você não tem permissão para alterar preço.');
+    const it = this.cart.itens.find(i => i.produtoId === id); if (!it) return;
     Modal.open({
-      title: '🔄 Receber usado como pagamento',
-      body: `<p class="muted" style="margin-bottom:14px">O usado entra no estoque e abate do valor da venda. A avaliação completa fica em "Avaliação de Usados".</p>
-      <div class="form-grid">
-        <div class="field full"><label>Produto recebido *</label><input id="u-nome" placeholder="Ex: PlayStation 4 Pro 1TB"></div>
-        <div class="field"><label>Categoria</label><select id="u-cat">${DB.all('categorias').map(c => `<option>${c.nome}</option>`).join('')}</select></div>
-        <div class="field"><label>Condição</label><select id="u-cond"><option>seminovo</option><option>usado</option></select></div>
-        <div class="field"><label>Valor aceito (abate) *</label><input id="u-valor" type="number" step="0.01" placeholder="0,00"></div>
-        <div class="field"><label>Preço sugerido revenda</label><input id="u-preco" type="number" step="0.01" placeholder="0,00"></div>
-      </div>`,
-      foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.confirmUsadoTroca()">Adicionar</button>`
+      title: '✎ Alterar preço nesta venda',
+      body: `<p class="muted" style="margin-bottom:12px">${esc(it.nome)} — vale só para esta venda; não altera o cadastro.</p>
+        <div class="form-grid">
+          <div class="field"><label>Preço padrão</label><input value="${Fmt.brl(it.precoOriginal != null ? it.precoOriginal : it.preco)}" disabled></div>
+          <div class="field"><label>Preço nesta venda (R$) *</label><input id="pe-valor" type="number" step="0.01" value="${it.preco}"></div>
+          <div class="field full"><label>Motivo</label><select id="pe-motivo"><option>Desconto negociado</option><option>Produto com detalhe</option><option>Promoção</option><option>Ajuste de preço</option></select></div>
+          <div class="field full"><label>Observação (opcional)</label><input id="pe-obs" placeholder="Detalhe da negociação"></div>
+        </div>`,
+      foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.precoSave('${id}')">Aplicar preço</button>`
     });
   },
-  confirmUsadoTroca() {
-    const nome = fval('u-nome'), valor = fnum('u-valor');
-    if (!nome || !valor) return Toast.err('Informe o produto e o valor aceito.');
-    this.cart.usado = { nome, categoria: fval('u-cat'), condicao: fval('u-cond'), valor, precoRevenda: fnum('u-preco') || valor * 1.6 };
-    Modal.close(); this.renderCart(); Toast.ok('Usado adicionado à troca.');
+  precoSave(id) {
+    const it = this.cart.itens.find(i => i.produtoId === id); if (!it) return;
+    const novo = fnum('pe-valor'); if (novo <= 0) return Toast.err('Informe um preço válido.');
+    if (it.precoOriginal == null) it.precoOriginal = it.preco;
+    it.preco = novo;
+    const obs = fval('pe-obs');
+    it.precoMotivo = (novo !== it.precoOriginal) ? (fval('pe-motivo') + (obs ? ' — ' + obs : '')) : null;
+    Modal.close(); this.renderCart(); Toast.ok('Preço aplicado nesta venda.');
+  },
+  setDesc(v) { this.cart.desconto = parseFloat(v) || 0; this.renderCart(); },
+  clearCart() { this.cart = { itens: [], desconto: 0, pagamentos: [], usado: null }; this.renderCart(); },
+  utSel: null,
+  addUsadoTroca() {
+    this.utSel = null;
+    Modal.open({
+      title: '🔄 Receber usado como pagamento', wide: true,
+      body: `<div id="ut-body"></div>`,
+      foot: `<button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
+    });
+    setTimeout(() => this.utRender(), 10);
+  },
+  utRender() {
+    const b = document.getElementById('ut-body'); if (!b) return;
+    if (!this.utSel) {
+      const cats = DB.all('categorias').map(c => c.nome), marcas = DB.all('marcas').map(m => m.nome);
+      b.innerHTML = `
+        <p class="muted" style="margin-bottom:12px">Busque o produto no catálogo. Ao selecionar, será adicionada 1 unidade ao estoque desse produto (sem duplicar cadastro).</p>
+        <div class="toolbar">
+          <input class="grow" id="ut-q" placeholder="Buscar nome, SKU ou código..." oninput="Modules.utFilter()">
+          <select id="ut-cat" onchange="Modules.utFilter()"><option value="">Categoria</option>${cats.map(c => `<option>${c}</option>`).join('')}</select>
+          <select id="ut-marca" onchange="Modules.utFilter()"><option value="">Marca</option>${marcas.map(m => `<option>${m}</option>`).join('')}</select>
+          <select id="ut-cond" onchange="Modules.utFilter()"><option value="">Condição</option><option>novo</option><option>seminovo</option><option>usado</option></select>
+        </div>
+        <div id="ut-list" style="max-height:46vh;overflow:auto;margin-bottom:12px"></div>
+        <button class="btn-ghost" onclick="Modules.utNovo()">+ Cadastrar novo produto</button>`;
+      this.utFilter();
+    } else {
+      const p = this.utSel;
+      b.innerHTML = `
+        <div class="list-row" style="background:var(--green-soft);border-radius:10px;padding:12px;margin-bottom:14px">
+          <div class="lr-ico">🎮</div><div class="lr-main"><div class="lr-title">${esc(p.nome)} ${condBadge(p.condicao)}</div><div class="lr-sub">${p.sku} · ${p.categoria} · ${p.marca} · estoque atual: ${p.qtd}</div></div>
+          <button class="btn-ghost btn-sm" onclick="Modules.utBack()">Trocar produto</button>
+        </div>
+        <div class="form-grid">
+          <div class="field"><label>Valor aceito na troca (R$) *</label><input id="u-valor" type="number" step="0.01" placeholder="0,00"></div>
+          <div class="field"><label>Estado do produto</label><select id="u-estado"><option>Excelente</option><option selected>Bom</option><option>Regular</option><option>Com defeito</option></select></div>
+          <div class="field"><label>Número de série</label><input id="u-serie"></div>
+          <div class="field"><label>Status inicial</label><select id="u-status"><option>Disponível</option><option selected>Aguardando revisão</option><option>Manutenção</option><option>Bloqueado</option></select></div>
+          <div class="field full"><label>Acompanha</label><div style="display:flex;gap:18px;padding-top:8px;flex-wrap:wrap"><label style="font-weight:400"><input type="checkbox" id="u-controle" checked> Controle</label><label style="font-weight:400"><input type="checkbox" id="u-cabos" checked> Cabos</label><label style="font-weight:400"><input type="checkbox" id="u-caixa"> Caixa</label></div></div>
+          <div class="field full"><label>Observações</label><input id="u-obs" placeholder="Detalhes da unidade recebida"></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px"><button class="btn-ghost" onclick="Modules.utBack()">Voltar</button><button class="btn-primary" onclick="Modules.utConfirm()">Adicionar à venda</button></div>`;
+    }
+  },
+  utFilter() {
+    const el = document.getElementById('ut-list'); if (!el) return;
+    const q = (fval('ut-q') || '').toLowerCase(), cat = fval('ut-cat'), marca = fval('ut-marca'), cond = fval('ut-cond');
+    let list = DB.all('produtos').filter(p =>
+      (!q || p.nome.toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q) || (p.barcode || '').includes(q)) &&
+      (!cat || p.categoria === cat) && (!marca || p.marca === marca) && (!cond || p.condicao === cond)).slice(0, 30);
+    el.innerHTML = list.length ? list.map(p => `
+      <div class="list-row" style="cursor:pointer" onclick="Modules.utPick('${p.id}')">
+        <div class="lr-ico">🎮</div><div class="lr-main"><div class="lr-title">${esc(p.nome)} ${condBadge(p.condicao)}</div><div class="lr-sub">${p.sku} · ${p.categoria} · ${p.marca} · ${p.qtd} em estoque</div></div>
+        <span style="font-size:18px;color:var(--txt-3)">›</span></div>`).join('')
+      : '<div class="empty-state" style="padding:24px">Nenhum produto encontrado. Use "Cadastrar novo produto".</div>';
+  },
+  utPick(id) { this.utSel = DB.get('produtos', id); this.utRender(); },
+  utBack() { this.utSel = null; this.utRender(); },
+  utNovo() {
+    const b = document.getElementById('ut-body'); if (!b) return;
+    const cats = DB.all('categorias').map(c => c.nome), marcas = DB.all('marcas').map(m => m.nome);
+    b.innerHTML = `
+      <p class="muted" style="margin-bottom:12px">Cadastro rápido — fica salvo no catálogo geral e já é selecionado.</p>
+      <div class="form-grid">
+        <div class="field full"><label>Nome do produto *</label><input id="un-nome" placeholder="Ex: PS4 Slim 1TB"></div>
+        <div class="field"><label>Categoria</label><select id="un-cat">${cats.map(c => `<option ${c === 'Consoles' ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+        <div class="field"><label>Marca</label><select id="un-marca">${marcas.map(m => `<option>${m}</option>`).join('')}</select></div>
+        <div class="field"><label>Modelo</label><input id="un-modelo"></div>
+        <div class="field"><label>Condição padrão</label><select id="un-cond"><option>usado</option><option>seminovo</option><option>novo</option></select></div>
+        <div class="field"><label>Preço sugerido de venda (R$)</label><input id="un-preco" type="number" step="0.01" value="0"></div>
+        <div class="field"><label>Estoque mínimo</label><input id="un-min" type="number" value="1"></div>
+        <div class="field"><label>SKU / código interno (opcional)</label><input id="un-sku" placeholder="gerado automaticamente"></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px"><button class="btn-ghost" onclick="Modules.utRender()">Voltar</button><button class="btn-primary" onclick="Modules.utNovoSave()">Cadastrar e selecionar</button></div>`;
+  },
+  utNovoSave() {
+    const nome = fval('un-nome'); if (!nome) return Toast.err('Informe o nome do produto.');
+    const p = DB.insert('produtos', {
+      nome, sku: fval('un-sku') || 'USD-' + Date.now().toString(36).toUpperCase().slice(-5), barcode: '',
+      categoria: fval('un-cat'), marca: fval('un-marca'), modelo: fval('un-modelo'), condicao: fval('un-cond'),
+      qtd: 0, min: parseInt(fval('un-min')) || 1, custo: 0, custoMedio: 0, preco: fnum('un-preco'), serie: '', local: 'Usados', status: 'disponivel'
+    });
+    Toast.ok('Produto cadastrado no catálogo.');
+    this.utSel = p; this.utRender();
+  },
+  utConfirm() {
+    const p = this.utSel, valor = fnum('u-valor');
+    if (!p || !valor) return Toast.err('Informe o valor aceito na troca.');
+    this.cart.usado = {
+      produtoId: p.id, nome: p.nome, categoria: p.categoria, marca: p.marca, condicao: p.condicao, valor,
+      estado: fval('u-estado'), serie: fval('u-serie'), controle: fchk('u-controle'), cabos: fchk('u-cabos'), caixa: fchk('u-caixa'),
+      obs: fval('u-obs'), statusInicial: fval('u-status')
+    };
+    Modal.close(); this.renderCart(); Toast.ok('Usado adicionado: ' + p.nome + ' (' + Fmt.brl(valor) + ').');
   },
   checkout() {
     if (!this.cart.itens.length) return;
     const c = this.cart;
     const bruto = c.itens.reduce((s, i) => s + i.preco * i.qtd, 0);
     const usadoVal = c.usado ? c.usado.valor : 0;
-    const total = Math.max(0, bruto - c.desconto - usadoVal);
+    const totalVenda = Math.max(0, bruto - c.desconto);
+    const total = Math.max(0, totalVenda - usadoVal); // valor a pagar em dinheiro/cartão
     const custoTot = c.itens.reduce((s, i) => s + i.custo * i.qtd, 0);
-    this.coCtx = { total, custoTot, bruto, usadoVal };
+    this.coCtx = { total, totalVenda, custoTot, bruto, usadoVal };
     const primeira = (typeof Taxas !== 'undefined' && Taxas.ativas()[0]) ? Taxas.ativas()[0].key : 'PIX';
     this.coPays = [{ method: primeira, valor: total }];
     Modal.open({
@@ -349,7 +538,7 @@ const Modules = {
           <div id="co-lines"></div>
           <button class="btn-ghost btn-sm" style="margin-top:8px" onclick="Modules.coAddLine()">+ Adicionar pagamento</button>
         </div>
-        <div><div class="section-title">Simulador da venda</div><div id="co-sim"></div></div>
+        <div><div class="section-title">Resumo da venda</div><div id="co-sim"></div></div>
       </div>`,
       foot: `<button class="btn-ghost" onclick="Modal.close()">Voltar</button><button class="btn-primary" id="co-confirm" onclick="Modules.confirmVenda()">✅ Confirmar venda</button>`
     });
@@ -362,64 +551,83 @@ const Modules = {
   coMethodToPag(key, valor) { if (key.indexOf('Crédito') === 0) { const m = key.match(/(\d+)x/); return { tipo: 'Crédito', valor, parcelas: m ? +m[1] : 1 }; } return { tipo: key, valor, parcelas: 1 }; },
   coRender() {
     const linesEl = document.getElementById('co-lines'); if (!linesEl) return;
-    const pays = this.coPays, { total, custoTot } = this.coCtx, opts = this.coMethods();
-    const fee = (key, val) => (typeof Taxas !== 'undefined') ? Taxas.feeByKey(key, val) : 0;
+    const pays = this.coPays, { total } = this.coCtx, opts = this.coMethods();
     linesEl.innerHTML = pays.map((p, idx) => `
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">
-        <select onchange="Modules.coSet(${idx},'method',this.value)" style="flex:1;background:var(--bg-2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 10px">${opts.map(o => `<option ${o === p.method ? 'selected' : ''}>${o}</option>`).join('')}</select>
-        <input type="number" step="0.01" value="${p.valor}" onchange="Modules.coSet(${idx},'valor',this.value)" style="width:108px;text-align:right;background:var(--bg-2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:8px 10px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <select onchange="Modules.coSet(${idx},'method',this.value)" style="flex:1;background:var(--bg-2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:9px 10px">${opts.map(o => `<option ${o === p.method ? 'selected' : ''}>${o}</option>`).join('')}</select>
+        <input type="number" step="0.01" value="${p.valor}" onchange="Modules.coSet(${idx},'valor',this.value)" style="width:120px;text-align:right;background:var(--bg-2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:9px 10px">
         ${pays.length > 1 ? `<span class="ci-rm" title="Remover" onclick="Modules.coDel(${idx})">✕</span>` : '<span style="width:14px"></span>'}
-      </div>
-      <div class="muted" style="font-size:11px;margin:0 0 10px 2px">Taxa desta forma: ${Fmt.brl(fee(p.method, +p.valor || 0))}</div>`).join('');
+      </div>`).join('');
 
     const soma = pays.reduce((s, p) => s + (+p.valor || 0), 0);
-    const taxaTotal = pays.reduce((s, p) => s + fee(p.method, +p.valor || 0), 0);
-    const liquido = total - taxaTotal, lucroB = total - custoTot, lucroL = liquido - custoTot;
-    const margemL = total ? lucroL / total * 100 : 0;
-    const restante = total - soma, troco = Math.max(0, soma - total);
-    const low = lucroL < 0 || margemL < 5;
-    const canFin = App.canFinance();
+    const cash = pays.filter(p => p.method === 'Dinheiro').reduce((s, p) => s + (+p.valor || 0), 0);
+    const nonCash = soma - cash;
+    const restante = +(total - soma).toFixed(2);
+    const excedenteCartao = +(nonCash - total).toFixed(2);
+    const troco = soma > total ? +(soma - total).toFixed(2) : 0;
+    const invalido = restante > 0.01 || excedenteCartao > 0.01;
+    const usadoVal = this.coCtx.usadoVal || 0, totalVenda = this.coCtx.totalVenda != null ? this.coCtx.totalVenda : total;
     document.getElementById('co-sim').innerHTML = `
       <div class="card" style="background:var(--bg-2)">
-        <div class="mini-stat"><span>Valor bruto</span><b>${Fmt.brl(total)}</b></div>
-        <div class="mini-stat"><span>Taxa estimada</span><b style="color:var(--red)">− ${Fmt.brl(taxaTotal)}</b></div>
-        <div class="mini-stat" style="font-size:15px"><span class="strong">Líquido a receber</span><b>${Fmt.brl(liquido)}</b></div>
-        ${canFin ? `<div class="mini-stat"><span>Lucro bruto</span><b>${Fmt.brl(lucroB)}</b></div>
-        <div class="mini-stat" style="font-size:15px"><span class="strong">Lucro líquido</span><b style="color:${lucroL >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(lucroL)}</b></div>
-        <div class="mini-stat"><span>Margem líquida</span><b style="color:${low ? 'var(--amber)' : 'var(--green)'}">${Fmt.pct(margemL)}</b></div>` : ''}
+        <div class="mini-stat" style="font-size:17px"><span class="strong">Total da venda</span><b style="color:var(--green)">${Fmt.brl(totalVenda)}</b></div>
+        ${this.cart.desconto ? `<div class="mini-stat"><span>Desconto aplicado</span><b style="color:var(--red)">− ${Fmt.brl(this.cart.desconto)}</b></div>` : ''}
+        ${usadoVal ? `<div class="mini-stat"><span>🔄 Usado recebido${this.cart.usado ? ' (' + esc(this.cart.usado.nome) + ')' : ''}</span><b style="color:var(--green)">− ${Fmt.brl(usadoVal)}</b></div>` : ''}
+        ${usadoVal ? `<div class="mini-stat"><span class="strong">A pagar</span><b>${Fmt.brl(total)}</b></div>` : ''}
+        <div class="mini-stat"><span>Valor já pago</span><b>${Fmt.brl(soma)}</b></div>
+        <div class="mini-stat"><span>Saldo restante</span><b style="color:${restante > 0.01 ? 'var(--amber)' : 'var(--green)'}">${Fmt.brl(Math.max(0, restante))}</b></div>
       </div>
-      ${restante > 0.01 ? `<div class="troco-box" style="background:rgba(245,165,36,.15)"><span class="muted">Falta pagar</span><span class="tb-val" style="color:var(--amber)">${Fmt.brl(restante)}</span></div>` : ''}
-      ${troco > 0.01 ? `<div class="troco-box"><span class="muted">Troco</span><span class="tb-val">${Fmt.brl(troco)}</span></div>` : ''}
-      ${low && canFin ? `<div class="alert-card danger" style="margin-top:12px"><div class="a-ico">⚠️</div><div><div class="a-lbl">Atenção: esta venda possui baixa margem líquida após taxas.</div></div></div>` : ''}`;
-    const btn = document.getElementById('co-confirm'); if (btn) { btn.disabled = restante > 0.01; btn.style.opacity = restante > 0.01 ? '.5' : '1'; }
+      ${troco > 0.01 && excedenteCartao <= 0.01 ? `<div class="troco-box"><span class="muted">Troco (dinheiro)</span><span class="tb-val">${Fmt.brl(troco)}</span></div>` : ''}
+      ${excedenteCartao > 0.01 ? `<div class="alert-card danger" style="margin-top:12px"><div class="a-ico">⚠️</div><div><div class="a-lbl">Pagamentos eletrônicos excedem o total em ${Fmt.brl(excedenteCartao)}. Ajuste os valores.</div></div></div>` : ''}`;
+    const btn = document.getElementById('co-confirm'); if (btn) { btn.disabled = invalido; btn.style.opacity = invalido ? '.5' : '1'; }
   },
   confirmVenda() {
     const c = this.cart, { total, custoTot, bruto } = this.coCtx, pays = this.coPays;
+    const totalVenda = this.coCtx.totalVenda != null ? this.coCtx.totalVenda : total;
+    const usadoVal = this.coCtx.usadoVal || 0;
     const soma = pays.reduce((s, p) => s + (+p.valor || 0), 0);
-    if (soma < total - 0.01) return Toast.err('Valor pago menor que o total.');
+    const cash = pays.filter(p => p.method === 'Dinheiro').reduce((s, p) => s + (+p.valor || 0), 0);
+    if (soma < total - 0.01) return Toast.err('Ainda falta ' + Fmt.brl(total - soma) + ' a pagar.');
+    if ((soma - cash) > total + 0.01) return Toast.err('Pagamentos eletrônicos excedem o total. Ajuste os valores.');
     const pagamentos = pays.map(p => { const pg = this.coMethodToPag(p.method, +p.valor || 0); pg.taxa = (typeof Taxas !== 'undefined') ? Taxas.feeByKey(p.method, +p.valor || 0) : 0; return pg; });
     const taxaTotal = pagamentos.reduce((s, p) => s + p.taxa, 0);
-    const lucro = total - custoTot, liquido = total - taxaTotal, lucroLiquido = liquido - custoTot;
+    const lucro = totalVenda - custoTot, liquido = totalVenda - taxaTotal, lucroLiquido = liquido - custoTot;
     c.itens.forEach(i => { const p = DB.get('produtos', i.produtoId); const novaQtd = p.qtd - i.qtd; DB.update('produtos', i.produtoId, { qtd: novaQtd, status: novaQtd <= 0 ? 'vendido' : p.status }); });
-    if (c.usado) {
-      DB.insert('produtos', { nome: c.usado.nome, sku: 'USD-' + Date.now().toString(36).toUpperCase().slice(-5), barcode: '', categoria: c.usado.categoria, marca: '—', modelo: '', condicao: c.usado.condicao, qtd: 1, min: 1, custo: c.usado.valor, custoMedio: c.usado.valor, preco: c.usado.precoRevenda, serie: '', local: 'Usados (entrada PDV)', status: 'disponivel' });
-      DB.logMov('usado', 'Usado recebido na troca: ' + c.usado.nome + ' (abate ' + Fmt.brl(c.usado.valor) + ')', { valor: c.usado.valor });
-    }
+    const troco = Math.max(0, soma - total);
+    const operador = (typeof App !== 'undefined' && App.user() && App.user().nome) ? App.user().nome : 'Admin';
+    const itensArr = c.itens.map(i => { const pr = DB.get('produtos', i.produtoId) || {}; return { produtoId: i.produtoId, sku: i.sku, nome: i.nome, qtd: i.qtd, preco: i.preco, precoOriginal: i.precoOriginal != null ? i.precoOriginal : i.preco, precoMotivo: i.precoMotivo || null, custo: i.custo, categoria: pr.categoria || '—', condicao: pr.condicao || 'novo' }; });
+    const cupomSnap = (typeof Cupom !== 'undefined') ? Cupom.snapshot({ itens: itensArr }) : null;
     const venda = DB.insert('vendas', {
-      data: new Date().toISOString(), itens: c.itens.map(i => { const pr = DB.get('produtos', i.produtoId) || {}; return { produtoId: i.produtoId, sku: i.sku, nome: i.nome, qtd: i.qtd, preco: i.preco, custo: i.custo, categoria: pr.categoria || '—', condicao: pr.condicao || 'novo' }; }),
-      bruto, desconto: c.desconto, total, custoTotal: custoTot, lucro, taxaTotal, liquido, lucroLiquido,
-      pagamentos, usadoEntrada: c.usado ? c.usado.nome : null, usuario: 'Admin'
+      data: new Date().toISOString(), itens: itensArr,
+      bruto, desconto: c.desconto, total: totalVenda, aPagar: total, custoTotal: custoTot, lucro, taxaTotal, liquido, lucroLiquido,
+      pagamentos, recebido: soma, troco, usadoEntrada: c.usado ? c.usado.nome : null, usadoValor: usadoVal, usado: c.usado || null, usuario: operador, cupom: cupomSnap
     });
+    // Usado como pagamento → reutiliza o produto do catálogo: +1 unidade (sem duplicar) e custo médio
+    if (c.usado) {
+      const u = c.usado;
+      const stMap = { 'Disponível': 'disponivel', 'Aguardando revisão': 'manutencao', 'Manutenção': 'manutencao', 'Bloqueado': 'reservado' };
+      const p = DB.get('produtos', u.produtoId);
+      if (p) {
+        const qNova = p.qtd + 1;
+        const custoMedio = qNova ? (((p.custoMedio || p.custo || 0) * p.qtd) + u.valor) / qNova : u.valor;
+        const patch = { qtd: qNova, custo: u.valor, custoMedio: Math.round(custoMedio * 100) / 100 };
+        if (u.serie && !p.serie) patch.serie = u.serie;
+        if (u.statusInicial && u.statusInicial !== 'Disponível') patch.status = stMap[u.statusInicial] || p.status;
+        DB.update('produtos', u.produtoId, patch);
+      }
+      DB.logMov('usado', 'Usado recebido na troca: ' + u.nome + (u.serie ? ' (S/N ' + u.serie + ')' : '') + ' — ' + Fmt.brl(u.valor) + ' · venda #' + venda.id.slice(-4), { valor: u.valor, refId: venda.id });
+      DB.logFin({ tipo: 'saida', categoria: 'Compra de usado', subcategoria: 'Troca', descricao: 'Usado recebido em troca: ' + u.nome + ' (venda #' + venda.id.slice(-4) + ')', valor: u.valor, status: 'pago', origem: 'usado', refId: venda.id });
+    }
     const formaStr = pagamentos.map(p => p.tipo + (p.parcelas > 1 ? ' ' + p.parcelas + 'x' : '')).join(' + ');
-    DB.logMov('venda', 'Venda: ' + c.itens.map(i => i.qtd + 'x ' + i.nome).join(', ') + (c.usado ? ' (troca c/ usado)' : ''), { valor: total, refId: venda.id });
-    DB.logFin({ tipo: 'entrada', categoria: 'Venda', descricao: 'Venda PDV #' + venda.id.slice(-4) + ' (' + formaStr + ')', valor: total, taxa: taxaTotal, liquido: liquido, status: 'pago', origem: 'venda', refId: venda.id });
+    DB.logMov('venda', 'Venda: ' + c.itens.map(i => i.qtd + 'x ' + i.nome).join(', ') + (c.usado ? ' (troca c/ usado)' : ''), { valor: totalVenda, refId: venda.id });
+    DB.logFin({ tipo: 'entrada', categoria: 'Venda', descricao: 'Venda PDV #' + venda.id.slice(-4) + ' (' + formaStr + (c.usado ? ' + usado' : '') + ')', valor: totalVenda, taxa: taxaTotal, liquido: liquido, status: 'pago', origem: 'venda', refId: venda.id });
     // dinheiro líquido (descontado troco) entra no Caixa
     const dinheiro = pagamentos.filter(p => p.tipo === 'Dinheiro').reduce((s, p) => s + p.valor, 0);
     const netCash = Math.max(0, dinheiro - Math.max(0, soma - total));
     if (netCash > 0 && typeof Caixa !== 'undefined') Caixa.add({ fluxo: 'entrada', tipo: 'Venda em dinheiro', origem: 'Venda em dinheiro', categoria: 'Venda', valor: netCash, obs: c.itens.map(i => i.nome).join(', '), refId: venda.id });
     Modal.close();
-    Toast.ok('Venda concluída! ' + Fmt.brl(total) + (taxaTotal ? ' · Líquido ' + Fmt.brl(liquido) : '') + ' · Lucro líq. ' + Fmt.brl(lucroLiquido));
+    Toast.ok('Venda concluída! ' + Fmt.brl(totalVenda) + (c.usado ? ' · usado ' + Fmt.brl(usadoVal) : '') + (troco > 0 ? ' · Troco ' + Fmt.brl(troco) : ''));
     this.clearCart(); this.pdvSearch();
+    if (typeof Print !== 'undefined') Print.maybeAfterSale(venda);
   },
 
   /* ===================== FORNECEDORES ===================== */

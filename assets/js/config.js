@@ -18,13 +18,31 @@ const Taxas = {
 
 const inStyle = 'background:var(--bg-2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:7px 10px';
 
+Modules.cfgState = { tab: 'taxas' };
 Modules.config = function () {
-  const t = Taxas.all();
+  const tabs = [['taxas', '💳 Taxas'], ['cupom', '🧾 Cupom e Garantia'], ['impressora', '🖨️ Impressora'], ['usuarios', '👤 Usuários'], ['permissoes', '🔒 Permissões'], ['nuvem', '☁️ Nuvem']];
+  setTimeout(() => Modules.cfgRenderTab(), 20);
   return `
-  <div class="page-head"><div><h1>Configurações</h1><p>Taxas e formas de pagamento</p></div>
-    <div class="actions"><button class="btn-ghost" onclick="Modules.cfgAdd()">+ Forma de pagamento</button></div></div>
-  <div class="card">
-    <div class="section-title">💳 Taxas e Pagamentos <span class="muted" style="font-weight:500;font-size:12px">Aplicadas automaticamente no PDV, no Financeiro e nos Relatórios.</span></div>
+  <div class="page-head"><div><h1>Configurações</h1><p>Ajustes do sistema</p></div></div>
+  <div class="tabs" id="cfg-subnav">${tabs.map(t => `<div class="tab ${this.cfgState.tab === t[0] ? 'active' : ''}" onclick="Modules.cfgSetTab('${t[0]}')">${t[1]}</div>`).join('')}</div>
+  <div id="cfg-body"></div>`;
+};
+Modules.cfgSetTab = function (t) {
+  this.cfgState.tab = t;
+  const keys = ['taxas', 'cupom', 'impressora', 'usuarios', 'permissoes', 'nuvem'];
+  document.querySelectorAll('#cfg-subnav .tab').forEach((el, i) => el.classList.toggle('active', keys[i] === t));
+  this.cfgRenderTab();
+};
+Modules.cfgRenderTab = function () {
+  const b = document.getElementById('cfg-body'); if (!b) return;
+  const t = this.cfgState.tab;
+  b.innerHTML = t === 'taxas' ? this.cfgTaxasCard() : t === 'cupom' ? this.cfgCupomArea() : t === 'impressora' ? this.cfgImpressoraCard() : t === 'usuarios' ? this.cfgUsuariosCard() : t === 'permissoes' ? this.cfgPermissoesCard() : this.cfgCloudCard();
+  if (t === 'cupom') this.cfgPreview();
+};
+Modules.cfgTaxasCard = function () {
+  const t = Taxas.all();
+  return `<div class="card">
+    <div class="section-title">💳 Taxas e Pagamentos <a onclick="Modules.cfgAdd()">+ Forma de pagamento</a></div>
     <div class="table-wrap" style="border:none"><table>
       <thead><tr><th>Forma de pagamento</th><th class="num">Taxa (%)</th><th class="num">Taxa fixa (R$)</th><th>Prazo de recebimento</th><th>Status</th><th></th></tr></thead>
       <tbody>${t.map(x => `<tr>
@@ -35,11 +53,34 @@ Modules.config = function () {
         <td><label style="display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-size:12.5px;color:var(--txt-2)"><input type="checkbox" ${x.ativo !== false ? 'checked' : ''} onchange="Modules.cfgSet('${x.id}','ativo',this.checked)"> ${x.ativo !== false ? 'Ativo' : 'Inativo'}</label></td>
         <td class="num">${x.custom ? `<button class="btn-icon" onclick="Modules.cfgDel('${x.id}')">🗑️</button>` : ''}</td>
       </tr>`).join('')}</tbody></table></div>
-    <p class="muted" style="margin-top:14px;font-size:12px;line-height:1.6">💡 Exemplo: Crédito 10x com 12% → numa venda de R$ 1.500, a taxa da maquininha é R$ 180, e o sistema desconta isso do lucro automaticamente.</p>
-  </div>
-  ${this.cfgUsuariosCard()}
-  ${this.cfgPermissoesCard()}
-  ${this.cfgCloudCard()}`;
+    <p class="muted" style="margin-top:14px;font-size:12px;line-height:1.6">💡 Exemplo: Crédito 10x com 12% → numa venda de R$ 1.500, a taxa da maquininha é R$ 180, descontada do lucro automaticamente.</p>
+  </div>`;
+};
+
+Modules.cfgImpressoraCard = function () {
+  const p = (typeof Print !== 'undefined') ? Print.cfg() : { papel: '80', modo: 'ask', corte: true, gaveta: false, telefone: '', endereco: '', loja: 'Rico Games' };
+  const opt = (v, val, lbl) => `<option value="${v}" ${val === v ? 'selected' : ''}>${lbl}</option>`;
+  return `<div class="card">
+    <div class="section-title">🖨️ Impressora <span class="muted" style="font-weight:500;font-size:12px">Cupom térmico (Elgin e compatíveis)</span></div>
+    <p class="muted" style="margin-bottom:12px;font-size:12px">Os dados da loja e os campos do cupom ficam na aba <b>Cupom e Garantia</b>.</p>
+    <div class="form-grid">
+      <div class="field"><label>Largura do papel</label><select onchange="Modules.cfgPrintSet('papel',this.value)">${opt('80', p.papel, '80 mm (padrão)')}${opt('58', p.papel, '58 mm (compacta)')}</select></div>
+      <div class="field"><label>Quando imprimir</label><select onchange="Modules.cfgPrintSet('modo',this.value)">${opt('auto', p.modo, 'Imprimir automaticamente após a venda')}${opt('ask', p.modo, 'Perguntar antes de imprimir')}${opt('off', p.modo, 'Não imprimir automaticamente')}</select></div>
+      <div class="field"><label>Corte automático</label><label style="display:inline-flex;align-items:center;gap:8px;padding-top:8px;font-size:13px;color:var(--txt-2)"><input type="checkbox" ${p.corte ? 'checked' : ''} onchange="Modules.cfgPrintSet('corte',this.checked)"> Cortar papel ao final</label></div>
+      <div class="field"><label>Gaveta de dinheiro</label><label style="display:inline-flex;align-items:center;gap:8px;padding-top:8px;font-size:13px;color:var(--txt-2)"><input type="checkbox" ${p.gaveta ? 'checked' : ''} onchange="Modules.cfgPrintSet('gaveta',this.checked)"> Abrir gaveta automaticamente</label></div>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn-primary" onclick="Print.test()">🖨️ Testar impressão</button>
+    </div>
+    <p class="muted" style="margin-top:12px;font-size:12px;line-height:1.6">O cupom abre na janela de impressão do navegador — escolha a impressora <b>Elgin</b> (instalada no Windows/Mac) e marque para lembrar como padrão. Dica: nas opções do navegador, ajuste margens para "Nenhuma" e desmarque cabeçalho/rodapé para o cupom sair limpo. Corte e gaveta automáticos dependem do driver da Elgin instalado no computador.</p>
+  </div>`;
+};
+Modules.cfgPrintSet = function (field, value) {
+  const cfg = DB.all('config')[0];
+  const imp = Object.assign({}, cfg.impressao || {});
+  imp[field] = value;
+  DB.update('config', cfg.id, { impressao: imp });
+  Toast.ok('Configuração salva.');
 };
 
 Modules.cfgCloudCard = function () {
@@ -92,8 +133,8 @@ Modules.cfgUsuariosCard = function () {
 Modules.cfgPermissoesCard = function () {
   const cfg = DB.all('config')[0] || {};
   const pf = Object.assign({}, PERM_DEFAULT_FUNC, cfg.permFuncionario || {}, { modules: Object.assign({}, PERM_DEFAULT_FUNC.modules, (cfg.permFuncionario || {}).modules || {}) });
-  const mods = [['pdv', 'PDV — Venda'], ['caixa', 'Caixa da Loja'], ['estoque', 'Estoque'], ['vendasDia', 'Vendas do Dia'], ['dashboard', 'Dashboard'], ['compras', 'Compras'], ['fornecedores', 'Fornecedores'], ['usados', 'Avaliação de Usados'], ['trocas', 'Trocas'], ['movimentacoes', 'Movimentações'], ['garantias', 'Garantias'], ['financeiro', 'Financeiro'], ['relatorios', 'Relatórios'], ['config', 'Configurações']];
-  const flags = [['verFinanceiro', 'Ver custo, lucro e margem'], ['podeCancelar', 'Cancelar vendas'], ['podeDesconto', 'Dar desconto no PDV'], ['podeEditarProduto', 'Editar / excluir produtos'], ['podeSangria', 'Sangria / retirada do caixa']];
+  const mods = [['pdv', 'PDV — Venda'], ['caixa', 'Caixa da Loja'], ['estoque', 'Estoque'], ['entrada', 'Entrada de Estoque'], ['vendasDia', 'Vendas do Dia'], ['dashboard', 'Dashboard'], ['compras', 'Compras'], ['fornecedores', 'Fornecedores'], ['usados', 'Avaliação de Usados'], ['trocas', 'Trocas'], ['movimentacoes', 'Movimentações'], ['garantias', 'Garantias'], ['financeiro', 'Financeiro'], ['relatorios', 'Relatórios'], ['config', 'Configurações']];
+  const flags = [['verFinanceiro', 'Ver custo, lucro e margem'], ['podeCancelar', 'Cancelar vendas'], ['podeDesconto', 'Dar desconto no PDV'], ['podeAlterarPreco', 'Alterar preço no PDV'], ['podeEditarProduto', 'Editar / excluir produtos'], ['podeSangria', 'Sangria / retirada do caixa']];
   const chk = (k, v, isMod) => `<label style="display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;cursor:pointer;font-size:13px"><input type="checkbox" ${v ? 'checked' : ''} onchange="Modules.cfgPermSet('${k}',this.checked,${isMod})"> ${k}</label>`;
   return `<div class="card" style="margin-top:18px">
     <div class="section-title">🔒 Permissões do Funcionário</div>

@@ -310,7 +310,7 @@ Modules.finProdRender = function () {
   const aggAll = BI.agg(vendas);
   const totReceita = aggAll.reduce((s, x) => s + x.receita, 0), totLucro = aggAll.reduce((s, x) => s + x.lucro, 0);
   const rng = per === 'all' ? null : BI.range(per, fval('fpz-de'), fval('fpz-ate'));
-  const despTotal = (typeof Fin !== 'undefined') ? DB.all('financeiro').filter(f => f.tipo === 'saida' && f.status !== 'cancelado' && f.origem !== 'compra' && f.origem !== 'venda').filter(f => { if (!rng) return true; const d = new Date(Fin.venc(f)); return d >= rng.start && d <= rng.end; }).reduce((s, f) => s + Fin.pagoVal(f), 0) : 0;
+  const despTotal = (typeof Fin !== 'undefined') ? DB.all('financeiro').filter(f => f.tipo === 'saida' && f.status !== 'cancelado' && f.origem !== 'compra' && f.origem !== 'venda' && f.origem !== 'usado').filter(f => { if (!rng) return true; const d = new Date(Fin.venc(f)); return d >= rng.start && d <= rng.end; }).reduce((s, f) => s + Fin.pagoVal(f), 0) : 0;
   const sel = MSelect.selected('finprod');
   if (!sel.length) { host.innerHTML = '<div class="empty-state"><div class="big">🔎</div>Selecione um ou mais produtos acima para ver a análise financeira.</div>'; return; }
   const rows = sel.map(sku => {

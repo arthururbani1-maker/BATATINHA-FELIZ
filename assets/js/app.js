@@ -31,14 +31,14 @@ const Theme = {
 
 /* ============ RICO GAMES ERP — Permissões ============ */
 const PERM_DEFAULT_FUNC = {
-  modules: { dashboard: false, vendasDia: true, pdv: true, caixa: true, estoque: true, compras: false, fornecedores: false, usados: false, trocas: false, movimentacoes: false, garantias: false, financeiro: false, relatorios: false, config: false },
-  verFinanceiro: false, podeCancelar: false, podeDesconto: true, podeEditarProduto: true, podeSangria: true
+  modules: { dashboard: false, vendasDia: true, pdv: true, caixa: true, estoque: true, entrada: false, compras: false, fornecedores: false, usados: false, trocas: false, movimentacoes: false, garantias: false, financeiro: false, relatorios: false, config: false },
+  verFinanceiro: false, podeCancelar: false, podeDesconto: true, podeEditarProduto: true, podeSangria: true, podeAlterarPreco: false
 };
 
 /* ============ RICO GAMES ERP — App / Router ============ */
 const App = {
   titles: {
-    dashboard: 'Dashboard', vendasDia: 'Vendas do Dia', pdv: 'PDV — Ponto de Venda', caixa: 'Caixa da Loja', estoque: 'Estoque',
+    dashboard: 'Dashboard', vendasDia: 'Vendas do Dia', pdv: 'PDV — Ponto de Venda', caixa: 'Caixa da Loja', estoque: 'Estoque', entrada: 'Entrada de Estoque',
     compras: 'Compras', fornecedores: 'Fornecedores', usados: 'Avaliação de Usados',
     trocas: 'Trocas e Usados', movimentacoes: 'Movimentações', garantias: 'Garantias',
     financeiro: 'Financeiro', relatorios: 'Relatórios', config: 'Configurações'
@@ -121,6 +121,7 @@ const App = {
     if (route === 'vendasDia') Modules.vdRender();
     if (route === 'caixa') Modules.cxRender();
     if (route === 'estoque') Modules.renderEstoqueTable();
+    if (route === 'entrada') Modules.entRender();
     if (route === 'pdv') { Modules.pdvSearch(); Modules.renderCart(); }
     if (route === 'movimentacoes') Modules.renderMovs();
     if (route === 'financeiro') Modules.finInit();

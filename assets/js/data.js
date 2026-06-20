@@ -4,13 +4,14 @@ const DB = (function () {
   const COLLECTIONS = [
     'produtos', 'categorias', 'marcas', 'fornecedores', 'compras',
     'vendas', 'avaliacoes', 'trocas', 'movimentacoes', 'garantias',
-    'financeiro', 'caixa', 'fechamentos', 'taxas', 'usuarios', 'config'
+    'financeiro', 'caixa', 'fechamentos', 'taxas', 'usuarios', 'modelosUsados', 'config'
   ];
   let state = null;
 
   function load() {
     try { state = JSON.parse(localStorage.getItem(KEY)); } catch (e) { state = null; }
     if (!state || !state.produtos) { state = seed(); save(); }
+    COLLECTIONS.forEach(c => { if (!Array.isArray(state[c])) state[c] = []; });
     return state;
   }
   function persist() { localStorage.setItem(KEY, JSON.stringify(state)); }
@@ -206,15 +207,17 @@ const DB = (function () {
       produtos: p, categorias, marcas, fornecedores, compras, vendas,
       avaliacoes, trocas: [], movimentacoes: seedMovs(vendas, compras, iso, daysAgo),
       garantias, financeiro, caixa, fechamentos: [], taxas,
+      modelosUsados: ['PS4 Fat 500GB', 'PS4 Slim 500GB', 'PS4 Slim 1TB', 'PS4 Pro 1TB', 'PS5 Fat', 'PS5 Slim', 'Nintendo Switch V1', 'Nintendo Switch OLED', 'Xbox One', 'Xbox Series S'].map((n, i) => ({ id: 'mu_' + (i + 1), nome: n, categoria: 'Consoles' })),
       usuarios: [
         { id: 'u_admin', nome: 'Administrador', usuario: 'admin', senha: '1234', role: 'admin', ativo: true },
         { id: 'u_func', nome: 'Funcionário', usuario: 'funcionario', senha: '1234', role: 'funcionario', ativo: true }
       ],
       config: [{
         id: 'cfg', loja: 'Rico Games', cnpj: '00.000.000/0001-00', garantiaPadraoNovo: 365, garantiaPadraoUsado: 90,
+        impressao: { papel: '80', modo: 'ask', corte: true, gaveta: false, telefone: '', whatsapp: '', endereco: '', loja: 'Rico Games' },
         permFuncionario: {
-          modules: { dashboard: false, vendasDia: true, pdv: true, caixa: true, estoque: true, compras: false, fornecedores: false, usados: false, trocas: false, movimentacoes: false, garantias: false, financeiro: false, relatorios: false, config: false },
-          verFinanceiro: false, podeCancelar: false, podeDesconto: true, podeEditarProduto: true, podeSangria: true
+          modules: { dashboard: false, vendasDia: true, pdv: true, caixa: true, estoque: true, entrada: false, compras: false, fornecedores: false, usados: false, trocas: false, movimentacoes: false, garantias: false, financeiro: false, relatorios: false, config: false },
+          verFinanceiro: false, podeCancelar: false, podeDesconto: true, podeEditarProduto: true, podeSangria: true, podeAlterarPreco: false
         }
       }]
     };
