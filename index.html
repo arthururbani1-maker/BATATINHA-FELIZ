@@ -403,6 +403,17 @@ td .muted,.muted{color:var(--txt-3)}
   .kpi .kpi-value{font-size:22px}
 }
 
+/* ===== Análise por forma de pagamento ===== */
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg-btn{background:transparent;border:none;color:var(--txt-2);padding:7px 14px;cursor:pointer;font-size:12.5px;font-weight:600}
+.seg-btn.on{background:var(--accent,#5b8cff);color:#fff}
+.pag-chartwrap{display:flex;gap:22px;align-items:center;flex-wrap:wrap}
+.pag-donut{flex:0 0 220px;display:flex;justify-content:center}
+.pag-legend{flex:1;min-width:240px;display:flex;flex-direction:column;gap:12px}
+.pag-leg{display:flex;gap:10px;align-items:flex-start}
+.pag-dot{width:12px;height:12px;border-radius:3px;display:inline-block;flex:0 0 auto;margin-top:3px}
+@media (max-width:640px){ .pag-chartwrap{flex-direction:column} .pag-donut{flex-basis:auto} }
+
 </style>
   <script>
     /* Aplica o tema o quanto antes para evitar "flash" ao carregar */
@@ -4458,7 +4469,7 @@ function periodOptsHtml(sel) { return [['all', 'Todo o período'], ['hoje', 'Hoj
 
 Modules.biState = { tab: 'geral', trend: 'dia', sel: [] };
 Modules.relatorios = function () {
-  const tabs = [['geral', '📊 Visão geral'], ['cross', '🔗 Vendas cruzadas'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['categorias', '🗂️ Categorias'], ['tendencias', '📈 Tendências'], ['rentab', '💎 Rentabilidade'], ['estoque', '📦 Estoque']];
+  const tabs = [['geral', '📊 Visão geral'], ['pagamentos', '💳 Formas de pagamento'], ['cross', '🔗 Vendas cruzadas'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['categorias', '🗂️ Categorias'], ['tendencias', '📈 Tendências'], ['rentab', '💎 Rentabilidade'], ['estoque', '📦 Estoque']];
   setTimeout(() => Modules.biRender(), 20);
   return `
   <div class="page-head"><div><h1>Business Intelligence</h1><p>Inteligência de vendas, margem e rentabilidade da Rico Games</p></div>
@@ -4469,14 +4480,14 @@ Modules.relatorios = function () {
 Modules.biInit = function () { this.biRender(); };
 Modules.biSetTab = function (t) {
   this.biState.tab = t;
-  const keys = ['geral', 'cross', 'rankings', 'pesquisa', 'categorias', 'tendencias', 'rentab', 'estoque'];
+  const keys = ['geral', 'pagamentos', 'cross', 'rankings', 'pesquisa', 'categorias', 'tendencias', 'rentab', 'estoque'];
   document.querySelectorAll('#bi-subnav .tab').forEach((el, i) => el.classList.toggle('active', keys[i] === t));
   this.biRender();
 };
 Modules.biRender = function () {
   const b = document.getElementById('bi-body'); if (!b) return;
   const t = this.biState.tab;
-  b.innerHTML = ({ geral: this.biGeral, cross: this.biCross, rankings: this.biRankings, pesquisa: this.biPesquisa, categorias: this.biCategorias, tendencias: this.biTendencias, rentab: this.biRentab, estoque: this.biEstoque })[t].call(this);
+  b.innerHTML = ({ geral: this.biGeral, pagamentos: this.biPagamentos, cross: this.biCross, rankings: this.biRankings, pesquisa: this.biPesquisa, categorias: this.biCategorias, tendencias: this.biTendencias, rentab: this.biRentab, estoque: this.biEstoque })[t].call(this);
   if (t === 'pesquisa') this.biCompara();
 };
 
@@ -4767,6 +4778,205 @@ Modules.biExport = function (fmt) {
     const rows = a.slice(0, 30).map(x => `<tr><td>${esc(x.nome)}</td><td>${esc(x.categoria)}</td><td class="num">${x.qtd}</td><td class="num">${Fmt.brl(x.receita)}</td><td class="num">${Fmt.brl(x.lucro)}</td><td class="num">${Fmt.pct(x.margemV)}</td></tr>`).join('');
     Exporter.pdf('Business Intelligence', kpis + `<table><thead><tr><th>Produto</th><th>Categoria</th><th class="num">Qtd</th><th class="num">Receita</th><th class="num">Lucro</th><th class="num">Margem</th></tr></thead><tbody>${rows}</tbody></table>`);
   }
+};
+
+/* ============ ANÁLISE POR FORMA DE PAGAMENTO ============ */
+BI.payKey = function (tipo, parcelas) {
+  if (tipo === 'Crédito') return (!parcelas || parcelas <= 1) ? 'Crédito à vista' : 'Crédito parcelado';
+  return tipo; // PIX, Dinheiro, Débito ou outra forma
+};
+BI.payOrder = ['PIX', 'Dinheiro', 'Débito', 'Crédito à vista', 'Crédito parcelado', 'Produto usado'];
+/* fração (0..1) do valor da venda que corresponde aos filtros de produto/categoria/condição */
+BI.payFrac = function (cat, prod, cond) {
+  if (!cat && !prod && !cond) return null;
+  return v => {
+    const base = (v.itens || []).reduce((s, i) => s + i.preco * i.qtd, 0);
+    if (!base) return 0;
+    const matched = (v.itens || []).filter(i => {
+      const p = BI.prodInfo(i.sku) || {};
+      const c = i.categoria || p.categoria, cd = i.condicao || p.condicao;
+      if (cat && c !== cat) return false;
+      if (cond && cd !== cond) return false;
+      if (prod && i.sku !== prod) return false;
+      return true;
+    }).reduce((s, i) => s + i.preco * i.qtd, 0);
+    return matched / base;
+  };
+};
+BI.payAgg = function (vendas, fracFn) {
+  const m = {}, ensure = k => (m[k] = m[k] || { key: k, nome: k, vendas: 0, valor: 0, taxa: 0 });
+  let totFat = 0, totVendas = 0;
+  vendas.forEach(v => {
+    const frac = fracFn ? fracFn(v) : 1;
+    if (frac <= 0) return;
+    totVendas++;
+    const usadoVal = ((v.usadoValor != null ? v.usadoValor : (v.usados ? v.usados.reduce((s, u) => s + (u.valor || 0), 0) : 0)) || 0) * frac;
+    const paysSum = (v.pagamentos || []).reduce((s, p) => s + (p.valor || 0), 0);
+    const recebido = v.recebido != null ? v.recebido : paysSum;
+    const aPagar = v.aPagar != null ? v.aPagar : Math.max(0, (v.total || 0) - (usadoVal / (frac || 1)));
+    let trocoRest = v.troco != null ? v.troco : Math.max(0, recebido - aPagar); // troco abatido só do dinheiro
+    const used = {};
+    (v.pagamentos || []).forEach(p => {
+      let val = p.valor || 0;
+      if (p.tipo === 'Dinheiro' && trocoRest > 0) { const cut = Math.min(val, trocoRest); val -= cut; trocoRest -= cut; }
+      val *= frac;
+      if (val <= 0.009) return;
+      const k = BI.payKey(p.tipo, p.parcelas); ensure(k);
+      m[k].valor += val;
+      m[k].taxa += (p.taxa != null ? p.taxa : (typeof Taxas !== 'undefined' ? Taxas.fee(p) : 0)) * frac;
+      used[k] = 1;
+    });
+    if (usadoVal > 0.009) { ensure('Produto usado'); m['Produto usado'].valor += usadoVal; used['Produto usado'] = 1; }
+    Object.keys(used).forEach(k => m[k].vendas++);
+    totFat += (v.total || 0) * frac;
+  });
+  const list = Object.values(m).sort((a, b) => {
+    const ia = BI.payOrder.indexOf(a.key), ib = BI.payOrder.indexOf(b.key);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+  list.forEach(x => { x.liquido = x.valor - x.taxa; x.pctFat = totFat ? x.valor / totFat * 100 : 0; x.pctQtd = totVendas ? x.vendas / totVendas * 100 : 0; });
+  return { list, totFat, totVendas, totTaxa: list.reduce((s, x) => s + x.taxa, 0), totLiq: list.reduce((s, x) => s + x.liquido, 0) };
+};
+BI.prevRange = function (r, per) {
+  if (per === 'mes') { const s = r.start; return { start: new Date(s.getFullYear(), s.getMonth() - 1, 1), end: new Date(s.getFullYear(), s.getMonth(), 0, 23, 59, 59, 999) }; }
+  if (per === 'ano') { const s = r.start; return { start: new Date(s.getFullYear() - 1, 0, 1), end: new Date(s.getFullYear() - 1, 11, 31, 23, 59, 59, 999) }; }
+  const dur = r.end - r.start, end = new Date(r.start.getTime() - 1), start = new Date(end.getTime() - dur);
+  return { start, end };
+};
+
+function payColor(k) { return ({ 'PIX': '#22c55e', 'Dinheiro': '#0ea5e9', 'Débito': '#6366f1', 'Crédito à vista': '#f59e0b', 'Crédito parcelado': '#ef4444', 'Produto usado': '#a855f7' })[k] || '#94a3b8'; }
+function biDonut(slices, total, centerLabel) {
+  const active = slices.filter(s => s.value > 0);
+  if (!total || !active.length) return '<div class="muted" style="text-align:center;padding:40px 0">Sem dados no período.</div>';
+  const cx = 110, cy = 110, R = 92, r = 58; let acc = 0, body = '';
+  if (active.length === 1) {
+    body = `<circle cx="${cx}" cy="${cy}" r="${(R + r) / 2}" fill="none" stroke="${active[0].color}" stroke-width="${R - r}"/>`;
+  } else {
+    body = active.map(s => {
+      const frac = s.value / total, a0 = acc * 2 * Math.PI - Math.PI / 2; acc += frac; const a1 = acc * 2 * Math.PI - Math.PI / 2, large = frac > 0.5 ? 1 : 0;
+      const X = (rad, a) => [cx + rad * Math.cos(a), cy + rad * Math.sin(a)];
+      const [x0, y0] = X(R, a0), [x1, y1] = X(R, a1), [xi1, yi1] = X(r, a1), [xi0, yi0] = X(r, a0);
+      return `<path d="M${x0.toFixed(2)} ${y0.toFixed(2)} A${R} ${R} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} L${xi1.toFixed(2)} ${yi1.toFixed(2)} A${r} ${r} 0 ${large} 0 ${xi0.toFixed(2)} ${yi0.toFixed(2)} Z" fill="${s.color}"/>`;
+    }).join('');
+  }
+  return `<svg viewBox="0 0 220 220" width="220" height="220" style="max-width:100%;display:block;margin:0 auto">${body}<text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="14" font-weight="800" fill="var(--txt)">${esc(centerLabel)}</text><text x="${cx}" y="${cy + 16}" text-anchor="middle" font-size="11" fill="var(--txt-2)">total</text></svg>`;
+}
+
+Modules.biPagState = { chart: 'fat' };
+Modules.biPagamentos = function () {
+  const cats = DB.all('categorias').map(c => c.nome);
+  const prods = BI.prods().slice().sort((a, b) => a.nome.localeCompare(b.nome));
+  setTimeout(() => Modules.biPagRender(), 20);
+  return `
+  <div class="card" style="margin-bottom:16px"><div class="section-title">💳 Análise por forma de pagamento</div>
+    <p class="muted" style="margin-bottom:12px;line-height:1.5">Entenda como os clientes pagam: participação de cada forma no faturamento e na quantidade de vendas, taxas pagas e valor líquido recebido. Vendas com pagamento dividido têm o valor distribuído corretamente entre as formas.</p>
+    <div class="toolbar" style="gap:8px;flex-wrap:wrap">
+      <select id="pag-per" onchange="Modules.biPagRender()">${periodOptsHtml('mes')}</select>
+      <span id="pag-custom" style="display:none;gap:8px;align-items:center"><input type="date" id="pag-de" onchange="Modules.biPagRender()"><span class="muted">até</span><input type="date" id="pag-ate" onchange="Modules.biPagRender()"></span>
+      <select id="pag-cat" onchange="Modules.biPagRender()"><option value="">Todas categorias</option>${cats.map(c => `<option>${esc(c)}</option>`).join('')}</select>
+      <select id="pag-cond" onchange="Modules.biPagRender()"><option value="">Toda condição</option><option value="novo">Novo</option><option value="seminovo">Seminovo</option><option value="usado">Usado</option></select>
+      <select id="pag-prod" onchange="Modules.biPagRender()"><option value="">Todos os produtos</option>${prods.map(p => `<option value="${esc(p.sku)}">${esc(p.nome)}</option>`).join('')}</select>
+    </div>
+  </div>
+  <div id="bipag-res"></div>`;
+};
+Modules.biPagSetChart = function (c) { this.biPagState.chart = c; this.biPagRender(); };
+Modules.biPagRender = function () {
+  const host = document.getElementById('bipag-res'); if (!host) return;
+  const per = fval('pag-per') || 'mes';
+  const cc = document.getElementById('pag-custom'); if (cc) cc.style.display = per === 'custom' ? 'inline-flex' : 'none';
+  const fracFn = BI.payFrac(fval('pag-cat'), fval('pag-prod'), fval('pag-cond'));
+  const r = BI.range(per, fval('pag-de'), fval('pag-ate'));
+  const vendas = BI.vendas().filter(v => { const d = new Date(v.data); return d >= r.start && d <= r.end; });
+  const cur = BI.payAgg(vendas, fracFn);
+  let prevMap = null, prevTot = 0, pr = null;
+  if (per !== 'all') {
+    pr = BI.prevRange(r, per);
+    const pv = BI.vendas().filter(v => { const d = new Date(v.data); return d >= pr.start && d <= pr.end; });
+    const prev = BI.payAgg(pv, fracFn); prevMap = {}; prev.list.forEach(x => prevMap[x.key] = x.valor); prevTot = prev.totFat;
+  }
+  host.innerHTML = Modules.biPagHtml(cur, prevMap, prevTot, per, r, pr);
+};
+Modules.biPagHtml = function (cur, prevMap, prevTot, per, r, pr) {
+  if (!cur.list.length) return '<div class="empty-state"><div class="big">💳</div>Nenhuma venda no período selecionado.</div>';
+  const mais = cur.list.slice().sort((a, b) => b.valor - a.valor)[0];
+  const usada = cur.list.slice().sort((a, b) => b.vendas - a.vendas)[0];
+  const periodoLabel = Fmt.date(r.start) + (Fmt.date(r.start) !== Fmt.date(r.end) ? ' a ' + Fmt.date(r.end) : '');
+  const chart = this.biPagState.chart;
+  const slices = cur.list.map(x => ({ label: x.key, value: chart === 'fat' ? x.valor : x.vendas, color: payColor(x.key) }));
+  const center = chart === 'fat' ? Fmt.brl(cur.totFat).replace('R$ ', 'R$') : cur.totVendas + '';
+  const total = chart === 'fat' ? cur.totFat : cur.list.reduce((s, x) => s + x.vendas, 0);
+  const legend = cur.list.map(x => {
+    const val = chart === 'fat' ? Fmt.brl(x.valor) : x.vendas + ' venda(s)';
+    const pct = chart === 'fat' ? x.pctFat : (total ? x.vendas / total * 100 : 0);
+    return `<div class="pag-leg"><span class="pag-dot" style="background:${payColor(x.key)}"></span>
+      <div style="flex:1"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(x.key)}</b><span class="strong">${val}</span></div>
+      <div class="bi-bartrack" style="margin-top:5px"><div class="bi-barfill" style="width:${Math.min(100, pct)}%;background:${payColor(x.key)}"></div></div>
+      <div class="muted" style="font-size:11px;margin-top:3px">${Fmt.pct(pct)} ${chart === 'fat' ? 'do faturamento' : 'das vendas'}</div></div></div>`;
+  }).join('');
+
+  const cmp = (key) => {
+    if (!prevMap) return '<span class="muted">—</span>';
+    const cu = (cur.list.find(x => x.key === key) || {}).valor || 0, pvv = prevMap[key] || 0;
+    if (!pvv && !cu) return '<span class="muted">—</span>';
+    if (!pvv) return '<span class="badge b-green">novo</span>';
+    const d = (cu - pvv) / pvv * 100;
+    const col = d >= 0 ? 'var(--green)' : 'var(--red)';
+    return `<span style="color:${col};font-weight:700">${d >= 0 ? '▲' : '▼'} ${Fmt.pct(Math.abs(d))}</span><div class="muted" style="font-size:10.5px">ant: ${Fmt.brl(pvv)}</div>`;
+  };
+
+  const rows = cur.list.map(x => `<tr>
+    <td><span class="pag-dot" style="background:${payColor(x.key)}"></span> <b>${esc(x.key)}</b></td>
+    <td class="num">${x.vendas}</td>
+    <td class="num">${Fmt.pct(x.pctQtd)}</td>
+    <td class="num strong">${Fmt.brl(x.valor)}</td>
+    <td class="num">${Fmt.pct(x.pctFat)}</td>
+    <td class="num ${x.taxa > 0 ? '' : 'muted'}">${x.taxa > 0 ? '− ' + Fmt.brl(x.taxa) : '—'}</td>
+    <td class="num strong" style="color:var(--green)">${Fmt.brl(x.liquido)}</td>
+    <td class="num">${cmp(x.key)}</td></tr>`).join('');
+
+  const totLiqGeral = cur.totFat - cur.totTaxa;
+  const deltaTot = (prevMap && prevTot) ? (cur.totFat - prevTot) / prevTot * 100 : null;
+
+  return `
+  <div class="grid kpis" style="margin-bottom:16px">
+    ${kpi('Mais fatura', mais ? mais.key : '—', mais ? Fmt.brl(mais.valor) + ' · ' + Fmt.pct(mais.pctFat) : '', '🏆', 'amber')}
+    ${kpi('Mais utilizada', usada ? usada.key : '—', usada ? usada.vendas + ' vendas · ' + Fmt.pct(usada.pctQtd) : '', '👥', 'blue')}
+    ${kpi('Total em taxas', Fmt.brl(cur.totTaxa), cur.totFat ? Fmt.pct(cur.totTaxa / cur.totFat * 100) + ' do faturamento' : '', '💳', 'red')}
+    ${kpi('Líquido recebido', Fmt.brl(totLiqGeral), 'após taxas de cartão', '🏦', 'purple')}
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px">
+      <div class="section-title" style="margin:0">Distribuição das vendas <span class="muted" style="font-weight:500">· ${esc(periodoLabel)}</span></div>
+      <div class="seg">
+        <button class="seg-btn ${chart === 'fat' ? 'on' : ''}" onclick="Modules.biPagSetChart('fat')">Por faturamento</button>
+        <button class="seg-btn ${chart === 'qtd' ? 'on' : ''}" onclick="Modules.biPagSetChart('qtd')">Por quantidade</button>
+      </div>
+    </div>
+    <div class="pag-chartwrap"><div class="pag-donut">${biDonut(slices, total, center)}</div><div class="pag-legend">${legend}</div></div>
+  </div>
+  <div class="card">
+    <div class="section-title">Detalhamento por forma de pagamento${deltaTot != null ? ` <span class="muted" style="font-weight:500">· faturamento ${deltaTot >= 0 ? '▲' : '▼'} ${Fmt.pct(Math.abs(deltaTot))} vs período anterior</span>` : ''}</div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Forma de pagamento</th><th class="num">Vendas</th><th class="num">% qtd</th><th class="num">Faturado</th><th class="num">% fat.</th><th class="num">Taxas</th><th class="num">Líquido</th><th class="num">vs ant.</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr style="font-weight:700;border-top:2px solid var(--line)"><td>TOTAL</td><td class="num">${cur.totVendas}</td><td class="num">100%</td><td class="num">${Fmt.brl(cur.totFat)}</td><td class="num">100%</td><td class="num">− ${Fmt.brl(cur.totTaxa)}</td><td class="num" style="color:var(--green)">${Fmt.brl(totLiqGeral)}</td><td></td></tr></tfoot>
+    </table></div>
+    <p class="muted" style="font-size:11.5px;margin-top:8px">Vendas com pagamento dividido aparecem em cada forma usada, por isso a soma de "% qtd" pode passar de 100%. Os valores em reais são sempre distribuídos proporcionalmente e somam o faturamento total.</p>
+    ${App.canFinance() ? `<div style="margin-top:10px"><button class="btn-ghost btn-sm" onclick="Modules.biPagExport()">⬇️ Exportar Excel</button></div>` : ''}
+  </div>`;
+};
+Modules.biPagExport = function () {
+  const per = fval('pag-per') || 'mes';
+  const fracFn = BI.payFrac(fval('pag-cat'), fval('pag-prod'), fval('pag-cond'));
+  const r = BI.range(per, fval('pag-de'), fval('pag-ate'));
+  const vendas = BI.vendas().filter(v => { const d = new Date(v.data); return d >= r.start && d <= r.end; });
+  const cur = BI.payAgg(vendas, fracFn), r2 = x => Math.round(x * 100) / 100;
+  const aoa = [['Rico Games — Análise por forma de pagamento'], ['Período', Fmt.date(r.start) + ' a ' + Fmt.date(r.end)], [],
+    ['Forma', 'Vendas', '% qtd', 'Faturado', '% fat', 'Taxas', 'Líquido']];
+  cur.list.forEach(x => aoa.push([x.key, x.vendas, r2(x.pctQtd), r2(x.valor), r2(x.pctFat), r2(x.taxa), r2(x.liquido)]));
+  aoa.push(['TOTAL', cur.totVendas, 100, r2(cur.totFat), 100, r2(cur.totTaxa), r2(cur.totFat - cur.totTaxa)]);
+  Exporter.xlsx('formas-pagamento-' + new Date().toISOString().slice(0, 10) + '.xlsx', 'Pagamentos', aoa);
 };
 
 </script>
