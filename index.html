@@ -414,6 +414,17 @@ td .muted,.muted{color:var(--txt-3)}
 .pag-dot{width:12px;height:12px;border-radius:3px;display:inline-block;flex:0 0 auto;margin-top:3px}
 @media (max-width:640px){ .pag-chartwrap{flex-direction:column} .pag-donut{flex-basis:auto} }
 
+/* ===== Pré-venda / Reservas ===== */
+.pv-alert{border:1px solid var(--line);border-radius:11px;padding:11px 13px;margin-bottom:10px;background:var(--bg-2)}
+.pv-alert.red{border-left:4px solid var(--red)} .pv-alert.amber{border-left:4px solid var(--amber)}
+.pv-alert.blue{border-left:4px solid #5b8cff} .pv-alert.green{border-left:4px solid var(--green)}
+.pv-alert-h{font-weight:700;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.pv-alert-list{display:flex;flex-wrap:wrap;gap:7px}
+.pv-chip{background:var(--bg);border:1px solid var(--line);border-radius:20px;padding:5px 11px;font-size:12px;cursor:pointer;transition:.15s}
+.pv-chip:hover{border-color:var(--accent,#5b8cff);color:var(--accent,#5b8cff)}
+.pv-actions{white-space:nowrap}
+.pv-actions .btn-icon{padding:4px 6px}
+
 </style>
   <script>
     /* Aplica o tema o quanto antes para evitar "flash" ao carregar */
@@ -475,6 +486,7 @@ td .muted,.muted{color:var(--txt-3)}
         <a class="nav-item" data-route="fornecedores"><span class="ico">🏭</span> Fornecedores</a>
         <a class="nav-item" data-route="usados"><span class="ico">🔍</span> Avaliação de Usados</a>
         <a class="nav-item" data-route="trocas"><span class="ico">🔄</span> Trocas</a>
+        <a class="nav-item" data-route="prevendas"><span class="ico">📋</span> Pré-venda / Reservas</a>
         <a class="nav-item" data-route="movimentacoes"><span class="ico">📜</span> Movimentações</a>
         <a class="nav-item" data-route="garantias"><span class="ico">🛡️</span> Garantias</a>
         <a class="nav-item" data-route="financeiro"><span class="ico">💰</span> Financeiro</a>
@@ -532,7 +544,7 @@ const DB = (function () {
   const COLLECTIONS = [
     'produtos', 'categorias', 'marcas', 'fornecedores', 'compras',
     'vendas', 'avaliacoes', 'trocas', 'movimentacoes', 'garantias',
-    'financeiro', 'caixa', 'fechamentos', 'taxas', 'usuarios', 'modelosUsados', 'config'
+    'financeiro', 'caixa', 'fechamentos', 'taxas', 'usuarios', 'modelosUsados', 'prevendas', 'config'
   ];
   let state = null;
 
@@ -736,13 +748,13 @@ const DB = (function () {
       produtos: [], categorias, marcas, fornecedores: [], compras: [], vendas: [],
       avaliacoes: [], trocas: [], movimentacoes: [],
       garantias: [], financeiro: [], caixa: [], fechamentos: [], taxas,
-      modelosUsados: [],
+      modelosUsados: [], prevendas: [],
       usuarios: [],
       config: [{
         id: 'cfg', loja: 'Rico Games', cnpj: '', garantiaPadraoNovo: 365, garantiaPadraoUsado: 90,
         impressao: { papel: '80', modo: 'ask', corte: true, gaveta: false, telefone: '', whatsapp: '', endereco: '', loja: 'Rico Games' },
         permFuncionario: {
-          modules: { dashboard: false, vendasDia: true, pdv: true, caixa: true, estoque: true, entrada: false, compras: false, fornecedores: false, usados: false, trocas: false, movimentacoes: false, garantias: false, financeiro: false, relatorios: false, config: false },
+          modules: { dashboard: false, vendasDia: true, pdv: true, caixa: true, estoque: true, entrada: false, compras: false, fornecedores: false, usados: false, trocas: false, prevendas: true, movimentacoes: false, garantias: false, financeiro: false, relatorios: false, config: false },
           verFinanceiro: false, podeCancelar: false, podeDesconto: true, podeEditarProduto: true, podeSangria: true, podeAlterarPreco: false
         }
       }]
@@ -2681,6 +2693,336 @@ const ProdHist = {
 
 </script>
   <script>
+/* ============ RICO GAMES ERP — Pré-venda / Reservas ============ */
+const PV = {
+  STATUS: {
+    reservado: ['Reservado', 'b-blue'], aguardando: ['Aguardando pagamento', 'b-amber'],
+    parcial: ['Parcialmente pago', 'b-amber'], pago: ['Pago', 'b-green'],
+    vencido: ['Vencido', 'b-red'], cancelado: ['Cancelado', 'b-gray'], entregue: ['Entregue', 'b-purple']
+  },
+  pago(pv) { return (pv.pagamentos || []).reduce((s, p) => s + (p.valor || 0), 0); },
+  restante(pv) { return Math.max(0, (pv.valorTotal || 0) - this.pago(pv)); },
+  todayStart() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; },
+  limite(pv) { return pv.dataLimite ? new Date(pv.dataLimite + 'T23:59:59') : null; },
+  overdue(pv) { const l = this.limite(pv); return l && l < this.todayStart(); },
+  diasAteLimite(pv) { const l = this.limite(pv); if (!l) return null; return Math.ceil((l - this.todayStart()) / 86400000); },
+  status(pv) {
+    if (pv.cancelado) return 'cancelado';
+    if (pv.entregue) return 'entregue';
+    const rest = this.restante(pv);
+    if (rest <= 0.009) return 'pago';
+    const od = this.overdue(pv);
+    if (this.pago(pv) > 0) return od ? 'vencido' : 'parcial';
+    return od ? 'vencido' : 'reservado';
+  },
+  badge(pv) { const s = this.status(pv), m = this.STATUS[s] || ['—', 'b-gray']; return `<span class="badge ${m[1]}">${m[0]}</span>`; }
+};
+
+Modules.pvFilters = { busca: '', status: '', prod: '', de: '', ate: '' };
+
+Modules.prevendas = function () {
+  setTimeout(() => Modules.pvRender(), 20);
+  return `
+  <div class="page-head"><div><h1>Pré-venda / Reservas</h1><p>Quem reservou, quem pagou, quem ainda precisa pagar e quanto falta receber</p></div>
+    <div class="actions"><button class="btn-primary" onclick="Modules.pvForm()">+ Nova reserva</button></div></div>
+  <div class="grid kpis" id="pv-kpis" style="margin-bottom:16px"></div>
+  <div id="pv-alertas" style="margin-bottom:16px"></div>
+  <div class="toolbar" style="flex-wrap:wrap;gap:8px">
+    <select id="pv-fstatus" onchange="Modules.pvRender()">
+      <option value="">Todos os status</option>
+      <option value="reservado">Reservado</option><option value="parcial">Parcialmente pago</option>
+      <option value="pago">Pago</option><option value="vencido">Vencido</option>
+      <option value="entregue">Entregue</option><option value="cancelado">Cancelado</option>
+      <option value="naopagos">Não pagos (restante &gt; 0)</option>
+    </select>
+    <input id="pv-fprod" placeholder="Filtrar por produto..." oninput="Modules.pvRender()">
+    <span style="display:inline-flex;gap:6px;align-items:center"><span class="muted" style="font-size:12px">limite</span><input type="date" id="pv-fde" onchange="Modules.pvRender()"><span class="muted">a</span><input type="date" id="pv-fate" onchange="Modules.pvRender()"></span>
+    <input class="grow" id="pv-fbusca" placeholder="Buscar cliente ou telefone..." oninput="Modules.pvRender()">
+  </div>
+  <div id="pv-table" style="margin-top:8px"></div>`;
+};
+
+Modules.pvData = function () {
+  const status = fval('pv-fstatus'), prod = (fval('pv-fprod') || '').toLowerCase(), busca = (fval('pv-fbusca') || '').toLowerCase();
+  const de = fval('pv-fde'), ate = fval('pv-fate');
+  let list = DB.all('prevendas').slice().sort((a, b) => {
+    const sa = PV.status(a), sb = PV.status(b);
+    const rank = { vencido: 0, parcial: 1, reservado: 2, pago: 3, entregue: 4, cancelado: 5 };
+    if (rank[sa] !== rank[sb]) return rank[sa] - rank[sb];
+    return (PV.limite(a) || 0) - (PV.limite(b) || 0);
+  });
+  list = list.filter(pv => {
+    const st = PV.status(pv);
+    if (status === 'naopagos') { if (PV.restante(pv) <= 0.009 || pv.cancelado) return false; }
+    else if (status && st !== status) return false;
+    if (prod && !(pv.produtoNome || '').toLowerCase().includes(prod)) return false;
+    if (busca && !((pv.cliente || '').toLowerCase().includes(busca) || (pv.telefone || '').toLowerCase().includes(busca))) return false;
+    if (de && (!pv.dataLimite || pv.dataLimite < de)) return false;
+    if (ate && (!pv.dataLimite || pv.dataLimite > ate)) return false;
+    return true;
+  });
+  return list;
+};
+
+Modules.pvRender = function () {
+  if (!document.getElementById('pv-kpis')) return;
+  const all = DB.all('prevendas');
+  const ativas = all.filter(p => !p.cancelado);
+  const totReservas = ativas.length;
+  const totPago = ativas.reduce((s, p) => s + PV.pago(p), 0);
+  const totPend = ativas.filter(p => !p.entregue).reduce((s, p) => s + PV.restante(p), 0);
+  const nPagos = ativas.filter(p => PV.restante(p) <= 0.009).length;
+  const nPend = ativas.filter(p => PV.restante(p) > 0.009).length;
+  const nVenc = ativas.filter(p => PV.status(p) === 'vencido').length;
+  document.getElementById('pv-kpis').innerHTML =
+    kpi('Total de reservas', Fmt.num(totReservas), ativas.length + ' ativas', '📋', 'blue') +
+    kpi('Total já pago', Fmt.brl(totPago), nPagos + ' cliente(s) quitados', '💰', 'green') +
+    kpi('Total pendente', Fmt.brl(totPend), 'a receber', '⏳', 'amber') +
+    kpi('Clientes pendentes', Fmt.num(nPend), nVenc + ' vencido(s)', '🔔', nVenc ? 'red' : '');
+
+  // ---- Alertas ----
+  const venc = [], hoje = [], breve = [], entregar = [];
+  ativas.forEach(p => {
+    const st = PV.status(p);
+    if (st === 'entregue') return;
+    if (st === 'pago') { entregar.push(p); return; }
+    const d = PV.diasAteLimite(p);
+    if (st === 'vencido') venc.push(p);
+    else if (d === 0) hoje.push(p);
+    else if (d != null && d > 0 && d <= 3) breve.push(p);
+  });
+  const alertCard = (titulo, arr, cls, ico) => arr.length ? `<div class="pv-alert ${cls}"><div class="pv-alert-h">${ico} ${titulo} <span class="badge b-gray">${arr.length}</span></div>
+    <div class="pv-alert-list">${arr.slice(0, 6).map(p => `<span class="pv-chip" onclick="Modules.pvPagar('${p.id}')">${esc(p.cliente)} · ${esc(p.produtoNome)} · ${Fmt.brl(PV.restante(p))}${p.dataLimite ? ' · ' + Fmt.date(p.dataLimite + 'T12:00:00') : ''}</span>`).join('')}</div></div>` : '';
+  const alertas = alertCard('Pagamento vencido', venc, 'red', '🚨') + alertCard('Vence hoje', hoje, 'amber', '⏰') +
+    alertCard('Vence nos próximos 3 dias', breve, 'blue', '📅') + alertCard('Pagas — aguardando entrega', entregar, 'green', '📦');
+  document.getElementById('pv-alertas').innerHTML = alertas || '';
+
+  // ---- Tabela ----
+  const list = this.pvData();
+  const rows = list.map(p => {
+    const st = PV.status(p), rest = PV.restante(p), pago = PV.pago(p);
+    const podeEntregar = !p.entregue && !p.cancelado && rest <= 0.009;
+    const ativo = !p.entregue && !p.cancelado;
+    return `<tr>
+      <td><div class="strong">${esc(p.cliente)}</div><div class="muted" style="font-size:11px">${esc(p.telefone || '—')}</div></td>
+      <td>${esc(p.produtoNome)}<div class="muted" style="font-size:11px">${p.qtd} un</div></td>
+      <td class="num">${Fmt.brl(p.valorTotal)}</td>
+      <td class="num" style="color:var(--green)">${Fmt.brl(pago)}</td>
+      <td class="num strong" style="color:${rest > 0 ? 'var(--red)' : 'var(--green)'}">${Fmt.brl(rest)}</td>
+      <td>${p.dataLimite ? Fmt.date(p.dataLimite + 'T12:00:00') : '—'}${st === 'vencido' ? ' <span style="color:var(--red)">⚠️</span>' : ''}</td>
+      <td>${PV.badge(p)}</td>
+      <td class="num pv-actions">
+        ${ativo && rest > 0.009 ? `<button class="btn-icon" title="Registrar pagamento" onclick="Modules.pvPagar('${p.id}')">💵</button>` : ''}
+        ${podeEntregar ? `<button class="btn-icon" title="Marcar como entregue (vira venda)" onclick="Modules.pvEntregar('${p.id}')">📦</button>` : ''}
+        ${p.telefone ? `<button class="btn-icon" title="WhatsApp" onclick="Modules.pvWhats('${p.id}')">💬</button>` : ''}
+        ${ativo ? `<button class="btn-icon" title="Editar" onclick="Modules.pvForm('${p.id}')">✏️</button>` : ''}
+        ${ativo ? `<button class="btn-icon" title="Cancelar reserva" onclick="Modules.pvCancel('${p.id}')">🗑️</button>` : ''}
+        <button class="btn-icon" title="Detalhes" onclick="Modules.pvDetail('${p.id}')">🔎</button>
+      </td></tr>`;
+  }).join('');
+  document.getElementById('pv-table').innerHTML = `<div class="table-wrap"><table>
+    <thead><tr><th>Cliente</th><th>Produto</th><th class="num">Total</th><th class="num">Pago</th><th class="num">Restante</th><th>Data limite</th><th>Status</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="8" class="muted" style="text-align:center;padding:34px">Nenhuma reserva encontrada.</td></tr>'}</tbody></table></div>`;
+};
+
+/* ---------- Cadastro / edição ---------- */
+Modules.pvForm = function (id) {
+  const p = id ? DB.get('prevendas', id) : {};
+  const prods = DB.all('produtos').slice().sort((a, b) => a.nome.localeCompare(b.nome));
+  const hoje = new Date().toISOString().slice(0, 10);
+  Modal.open({
+    title: id ? '✏️ Editar reserva' : '📋 Nova reserva', wide: true,
+    body: `<div class="form-grid">
+      <div class="field"><label>Nome do cliente *</label><input id="pv-cliente" value="${esc(p.cliente || '')}"></div>
+      <div class="field"><label>Telefone / WhatsApp</label><input id="pv-tel" placeholder="11 99999-9999" value="${esc(p.telefone || '')}"></div>
+      <div class="field full"><label>Produto reservado *</label><input id="pv-prod" list="pv-prodlist" placeholder="Ex: GTA VI PS5" value="${esc(p.produtoNome || '')}" onchange="Modules.pvPickProd()">
+        <datalist id="pv-prodlist">${prods.map(x => `<option value="${esc(x.nome)}" data-sku="${esc(x.sku)}">${x.sku} · ${Fmt.brl(x.preco)}</option>`).join('')}</datalist>
+        <div class="muted" style="font-size:11px;margin-top:3px">Pode ser um produto que ainda não chegou. Se já existir no estoque, a baixa será automática na entrega.</div></div>
+      <div class="field"><label>Quantidade</label><input id="pv-qtd" type="number" min="1" value="${p.qtd || 1}" oninput="Modules.pvCalcTotal()"></div>
+      <div class="field"><label>Valor unitário (R$) <span class="muted" style="font-weight:400">opcional</span></label><input id="pv-unit" type="text" inputmode="decimal" placeholder="ex: 499,90" value="${p.valorUnit != null ? String(p.valorUnit).replace('.', ',') : ''}" oninput="Modules.pvCalcTotal()"></div>
+      <div class="field"><label>Valor total da reserva (R$) *</label><input id="pv-total" type="text" inputmode="decimal" placeholder="ex: 499,90" value="${p.valorTotal != null ? String(p.valorTotal).replace('.', ',') : ''}"></div>
+      ${id ? '' : `<div class="field"><label>Sinal / entrada já pago (R$) <span class="muted" style="font-weight:400">opcional</span></label><input id="pv-sinal" type="text" inputmode="decimal" placeholder="0,00"></div>`}
+      <div class="field"><label>Data da reserva</label><input id="pv-datares" type="date" value="${p.dataReserva ? p.dataReserva.slice(0, 10) : hoje}"></div>
+      <div class="field"><label>Data limite para pagamento</label><input id="pv-limite" type="date" value="${p.dataLimite || ''}"></div>
+      <div class="field full"><label>Observações</label><input id="pv-obs" value="${esc(p.obs || '')}"></div>
+    </div>`,
+    foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.pvSave('${id || ''}')">Salvar reserva</button>`
+  });
+};
+Modules.pvPickProd = function () {
+  const nome = fval('pv-prod');
+  const p = DB.all('produtos').find(x => x.nome.toLowerCase() === nome.toLowerCase());
+  if (p) { const u = document.getElementById('pv-unit'); if (u && !u.value) { u.value = String(p.preco).replace('.', ','); this.pvCalcTotal(); } }
+};
+Modules.pvCalcTotal = function () {
+  const qtd = parseInt(fval('pv-qtd')) || 0, unit = moneyBR(fval('pv-unit'));
+  const t = document.getElementById('pv-total');
+  if (t && !isNaN(unit) && qtd > 0) t.value = String(Math.round(unit * qtd * 100) / 100).replace('.', ',');
+};
+Modules.pvSave = function (id) {
+  const cliente = fval('pv-cliente'), produtoNome = fval('pv-prod');
+  if (!cliente) return Toast.err('Informe o nome do cliente.');
+  if (!produtoNome) return Toast.err('Informe o produto reservado.');
+  let valorTotal = moneyBR(fval('pv-total'));
+  const unitTmp = moneyBR(fval('pv-unit')), qtdTmp = parseInt(fval('pv-qtd')) || 1;
+  if ((isNaN(valorTotal) || valorTotal <= 0) && !isNaN(unitTmp) && unitTmp > 0) valorTotal = Math.round(unitTmp * qtdTmp * 100) / 100; // calcula a partir do unitário
+  if (isNaN(valorTotal) || valorTotal <= 0) return Toast.err('Informe o valor total (ou o valor unitário) da reserva.');
+  const linked = DB.all('produtos').find(x => x.nome.toLowerCase() === produtoNome.toLowerCase());
+  const data = {
+    cliente, telefone: fval('pv-tel'), produtoNome,
+    produtoId: linked ? linked.id : null, sku: linked ? linked.sku : null,
+    qtd: parseInt(fval('pv-qtd')) || 1, valorUnit: moneyBR(fval('pv-unit')) || null, valorTotal,
+    dataReserva: (fval('pv-datares') || new Date().toISOString().slice(0, 10)) + 'T12:00:00',
+    dataLimite: fval('pv-limite') || '', obs: fval('pv-obs')
+  };
+  if (isNaN(data.valorUnit)) data.valorUnit = null;
+  if (id) {
+    DB.update('prevendas', id, data);
+    Toast.ok('Reserva atualizada.');
+  } else {
+    data.pagamentos = []; data.entregue = false; data.cancelado = false;
+    const sinal = moneyBR(fval('pv-sinal'));
+    if (!isNaN(sinal) && sinal > 0) data.pagamentos.push({ data: new Date().toISOString(), valor: Math.min(sinal, valorTotal), forma: 'Dinheiro' });
+    const pv = DB.insert('prevendas', data);
+    DB.logMov('reserva', 'Reserva criada: ' + produtoNome + ' — ' + cliente + ' (' + Fmt.brl(valorTotal) + ')', { valor: valorTotal, refId: pv.id });
+    Toast.ok('Reserva criada!');
+  }
+  Modal.close(); App.go('prevendas');
+};
+
+/* ---------- Pagamento ---------- */
+Modules.pvPagar = function (id) {
+  const pv = DB.get('prevendas', id); if (!pv) return;
+  const rest = PV.restante(pv);
+  const formas = (typeof Taxas !== 'undefined') ? Taxas.ativas().map(t => t.key) : ['PIX', 'Dinheiro', 'Débito', 'Crédito à vista'];
+  Modal.open({
+    title: '💵 Registrar pagamento',
+    body: `<div class="card" style="background:var(--bg-2);margin-bottom:14px">
+        <div class="mini-stat"><span>Cliente</span><b>${esc(pv.cliente)}</b></div>
+        <div class="mini-stat"><span>Produto</span><b>${esc(pv.produtoNome)}</b></div>
+        <div class="mini-stat"><span>Valor total</span><b>${Fmt.brl(pv.valorTotal)}</b></div>
+        <div class="mini-stat"><span>Já pago</span><b style="color:var(--green)">${Fmt.brl(PV.pago(pv))}</b></div>
+        <div class="mini-stat" style="font-size:15px"><span class="strong">Restante</span><b style="color:var(--red)">${Fmt.brl(rest)}</b></div>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label>Valor do pagamento (R$)</label><input id="pvp-valor" type="text" inputmode="decimal" value="${String(Math.round(rest * 100) / 100).replace('.', ',')}"></div>
+        <div class="field"><label>Forma de pagamento</label><select id="pvp-forma">${formas.map(f => `<option>${esc(f)}</option>`).join('')}</select></div>
+        <div class="field"><label>Data do pagamento</label><input id="pvp-data" type="date" value="${new Date().toISOString().slice(0, 10)}"></div>
+      </div>
+      <div style="margin-top:8px"><button class="btn-ghost btn-sm" onclick="document.getElementById('pvp-valor').value='${String(Math.round(rest * 100) / 100).replace('.', ',')}'">Pagar total</button></div>`,
+    foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.pvPagarSave('${id}')">Confirmar pagamento</button>`
+  });
+};
+Modules.pvPagarSave = function (id) {
+  const pv = DB.get('prevendas', id); if (!pv) return;
+  const valor = moneyBR(fval('pvp-valor'));
+  if (isNaN(valor) || valor <= 0) return Toast.err('Informe um valor válido.');
+  const rest = PV.restante(pv);
+  if (valor > rest + 0.01) return Toast.err('Valor maior que o restante (' + Fmt.brl(rest) + ').');
+  const pagamentos = (pv.pagamentos || []).slice();
+  pagamentos.push({ data: (fval('pvp-data') || new Date().toISOString().slice(0, 10)) + 'T12:00:00', valor, forma: fval('pvp-forma') || 'Dinheiro' });
+  DB.update('prevendas', id, { pagamentos });
+  DB.logMov('reserva', 'Pagamento de reserva: ' + pv.cliente + ' — ' + Fmt.brl(valor) + ' (' + fval('pvp-forma') + ')', { valor, refId: id });
+  const novoRest = PV.restante(DB.get('prevendas', id));
+  Toast.ok(novoRest <= 0.009 ? 'Reserva quitada! 🎉' : 'Pagamento registrado. Restante: ' + Fmt.brl(novoRest));
+  Modal.close(); App.go('prevendas');
+};
+
+/* ---------- Cancelar ---------- */
+Modules.pvCancel = function (id) {
+  const pv = DB.get('prevendas', id); if (!pv) return;
+  Modal.confirm('Cancelar a reserva de <b>' + esc(pv.cliente) + '</b> (' + esc(pv.produtoNome) + ')? Os valores pagos ficam registrados no histórico da reserva.', () => {
+    DB.update('prevendas', id, { cancelado: true, canceladoEm: new Date().toISOString() });
+    DB.logMov('reserva', 'Reserva cancelada: ' + pv.produtoNome + ' — ' + pv.cliente, { valor: 0, refId: id });
+    Toast.ok('Reserva cancelada.'); Modal.close(); App.go('prevendas');
+  }, 'Cancelar reserva');
+};
+
+/* ---------- Entregar → vira venda ---------- */
+Modules.pvEntregar = function (id) {
+  const pv = DB.get('prevendas', id); if (!pv) return;
+  if (PV.restante(pv) > 0.009) return Toast.err('Quite o pagamento antes de entregar (restante ' + Fmt.brl(PV.restante(pv)) + ').');
+  const prod = pv.produtoId ? DB.get('produtos', pv.produtoId) : null;
+  let aviso = '';
+  if (!prod) aviso = '<div class="muted" style="margin-top:8px">⚠️ Produto não vinculado ao estoque — a venda será registrada, mas sem baixa automática de estoque.</div>';
+  else if (prod.qtd < pv.qtd) aviso = '<div class="muted" style="margin-top:8px">⚠️ Estoque atual (' + prod.qtd + ') menor que o reservado (' + pv.qtd + '). O estoque ficará negativo.</div>';
+  Modal.confirm('Confirmar entrega de <b>' + esc(pv.produtoNome) + '</b> para <b>' + esc(pv.cliente) + '</b>?<br>Isso vai gerar a venda, dar baixa no estoque e lançar no financeiro.' + aviso, () => {
+    Modules.pvConvert(pv);
+  }, 'Entregar e faturar');
+};
+Modules.pvConvert = function (pv) {
+  const prod = pv.produtoId ? DB.get('produtos', pv.produtoId) : null;
+  const custoUnit = prod ? (prod.custoMedio || prod.custo || 0) : 0;
+  const total = pv.valorTotal, qtd = pv.qtd, precoUnit = Math.round((total / qtd) * 100) / 100;
+  const custoTot = custoUnit * qtd;
+  // pagamentos agrupados por forma (a partir do que o cliente pagou na reserva)
+  const grupo = {};
+  (pv.pagamentos || []).forEach(p => { grupo[p.forma] = (grupo[p.forma] || 0) + p.valor; });
+  if (!Object.keys(grupo).length) grupo['Dinheiro'] = total;
+  const pagamentos = Object.entries(grupo).map(([forma, valor]) => {
+    const taxa = (typeof Taxas !== 'undefined') ? Taxas.feeByKey(forma, valor) : 0;
+    return { tipo: forma, valor: Math.round(valor * 100) / 100, parcelas: 1, taxa };
+  });
+  const taxaTotal = pagamentos.reduce((s, p) => s + (p.taxa || 0), 0);
+  const operador = (typeof App !== 'undefined' && App.user() && App.user().nome) ? App.user().nome : 'Admin';
+  const venda = DB.insert('vendas', {
+    data: new Date().toISOString(),
+    itens: [{ produtoId: pv.produtoId || null, sku: pv.sku || '', nome: pv.produtoNome, qtd, preco: precoUnit, custo: custoUnit, categoria: prod ? prod.categoria : '', condicao: prod ? prod.condicao : 'novo' }],
+    bruto: total, desconto: 0, total, aPagar: total, custoTotal: custoTot,
+    lucro: total - custoTot, taxaTotal, liquido: total - taxaTotal, lucroLiquido: total - taxaTotal - custoTot,
+    pagamentos, recebido: total, troco: 0, usados: [], usuario: operador, origem: 'prevenda', prevendaId: pv.id
+  });
+  if (prod) DB.update('produtos', pv.produtoId, { qtd: prod.qtd - qtd, status: (prod.qtd - qtd) <= 0 ? 'vendido' : prod.status });
+  DB.logMov('venda', 'Pré-venda entregue: ' + qtd + 'x ' + pv.produtoNome + ' — ' + pv.cliente + ' (venda #' + venda.id.slice(-4) + ')', { valor: total, refId: venda.id });
+  DB.logFin({ tipo: 'entrada', categoria: 'Venda', descricao: 'Pré-venda entregue #' + venda.id.slice(-4) + ' — ' + pv.cliente, valor: total, taxa: taxaTotal, liquido: total - taxaTotal, status: 'pago', origem: 'venda', refId: venda.id });
+  const dinheiro = pagamentos.filter(p => p.tipo === 'Dinheiro').reduce((s, p) => s + p.valor, 0);
+  if (dinheiro > 0 && typeof Caixa !== 'undefined') Caixa.add({ fluxo: 'entrada', tipo: 'Venda em dinheiro', origem: 'Pré-venda entregue', categoria: 'Venda', valor: dinheiro, obs: pv.produtoNome + ' — ' + pv.cliente, refId: venda.id });
+  DB.update('prevendas', pv.id, { entregue: true, entregueEm: new Date().toISOString(), vendaId: venda.id });
+  Modal.close(); Toast.ok('Entregue e faturado! Venda #' + venda.id.slice(-4) + ' criada.'); App.go('prevendas');
+};
+
+/* ---------- WhatsApp ---------- */
+Modules.pvWhats = function (id) {
+  const pv = DB.get('prevendas', id); if (!pv) return;
+  const tel = (pv.telefone || '').replace(/\D/g, '');
+  if (!tel) return Toast.err('Cliente sem telefone cadastrado.');
+  const num = tel.length <= 11 ? '55' + tel : tel;
+  const rest = PV.restante(pv);
+  let msg;
+  if (PV.status(pv) === 'pago') msg = `Olá ${pv.cliente}! Boa notícia: seu produto reservado *${pv.produtoNome}* está disponível para retirada na Rico Games. 🎮`;
+  else msg = `Olá ${pv.cliente}! Passando para lembrar da sua reserva do *${pv.produtoNome}* na Rico Games.\nValor total: ${Fmt.brl(pv.valorTotal)}\nJá pago: ${Fmt.brl(PV.pago(pv))}\nRestante: ${Fmt.brl(rest)}${pv.dataLimite ? `\nData limite: ${Fmt.date(pv.dataLimite + 'T12:00:00')}` : ''}`;
+  window.open('https://wa.me/' + num + '?text=' + encodeURIComponent(msg), '_blank');
+};
+
+/* ---------- Detalhes ---------- */
+Modules.pvDetail = function (id) {
+  const pv = DB.get('prevendas', id); if (!pv) return;
+  const pagsHtml = (pv.pagamentos || []).length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Forma</th><th class="num">Valor</th></tr></thead>
+    <tbody>${pv.pagamentos.map(p => `<tr><td>${Fmt.date(p.data)}</td><td>${esc(p.forma)}</td><td class="num strong" style="color:var(--green)">${Fmt.brl(p.valor)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum pagamento registrado ainda.</p>';
+  Modal.open({
+    title: '🔎 Reserva — ' + esc(pv.cliente),
+    body: `<div class="card" style="background:var(--bg-2);margin-bottom:14px">
+        <div class="mini-stat"><span>Cliente</span><b>${esc(pv.cliente)}</b></div>
+        <div class="mini-stat"><span>Telefone</span><b>${esc(pv.telefone || '—')}</b></div>
+        <div class="mini-stat"><span>Produto</span><b>${esc(pv.produtoNome)} · ${pv.qtd} un</b></div>
+        <div class="mini-stat"><span>Data da reserva</span><b>${pv.dataReserva ? Fmt.date(pv.dataReserva) : '—'}</b></div>
+        <div class="mini-stat"><span>Data limite</span><b>${pv.dataLimite ? Fmt.date(pv.dataLimite + 'T12:00:00') : '—'}</b></div>
+        <div class="mini-stat"><span>Status</span><b>${PV.badge(pv)}</b></div>
+        ${pv.obs ? `<div class="mini-stat"><span>Observações</span><b>${esc(pv.obs)}</b></div>` : ''}
+        ${pv.vendaId ? `<div class="mini-stat"><span>Venda gerada</span><b>#${pv.vendaId.slice(-4)}</b></div>` : ''}
+      </div>
+      <div class="section-title" style="margin:0 0 8px">Pagamentos</div>${pagsHtml}
+      <div class="card" style="background:var(--bg-2);margin-top:14px">
+        <div class="mini-stat"><span>Valor total</span><b>${Fmt.brl(pv.valorTotal)}</b></div>
+        <div class="mini-stat"><span>Total pago</span><b style="color:var(--green)">${Fmt.brl(PV.pago(pv))}</b></div>
+        <div class="mini-stat" style="font-size:15px"><span class="strong">Restante</span><b style="color:${PV.restante(pv) > 0 ? 'var(--red)' : 'var(--green)'}">${Fmt.brl(PV.restante(pv))}</b></div>
+      </div>`,
+    foot: `${(!pv.entregue && !pv.cancelado && PV.restante(pv) > 0.009) ? `<button class="btn-primary" style="margin-right:auto" onclick="Modal.close();Modules.pvPagar('${id}')">💵 Registrar pagamento</button>` : ''}<button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
+  });
+};
+
+</script>
+  <script>
 /* ============ RICO GAMES ERP — Vendas do Dia ============ */
 Modules.vendasDia = function () {
   const cats = DB.all('categorias').map(c => c.nome);
@@ -3738,7 +4080,7 @@ Modules.cfgResetData = function () {
   if (!fchk('rs-ok')) return Toast.err('Marque a confirmação de que entende que é irreversível.');
   Modal.confirm('Tem certeza ABSOLUTA? Todos os dados operacionais serão apagados agora e não poderão ser recuperados.', () => {
     const s = DB.state();
-    ['produtos', 'vendas', 'compras', 'fornecedores', 'avaliacoes', 'trocas', 'movimentacoes', 'garantias', 'financeiro', 'caixa', 'fechamentos', 'modelosUsados'].forEach(c => { if (Array.isArray(s[c])) s[c].length = 0; });
+    ['produtos', 'vendas', 'compras', 'fornecedores', 'avaliacoes', 'trocas', 'prevendas', 'movimentacoes', 'garantias', 'financeiro', 'caixa', 'fechamentos', 'modelosUsados'].forEach(c => { if (Array.isArray(s[c])) s[c].length = 0; });
     s.config[0].resetLogs = s.config[0].resetLogs || [];
     s.config[0].resetLogs.unshift({ data: new Date().toISOString(), usuario: (App.user() && App.user().nome) || 'Admin' });
     DB.save();
@@ -3765,7 +4107,7 @@ Modules.cfgUsuariosCard = function () {
 Modules.cfgPermissoesCard = function () {
   const cfg = DB.all('config')[0] || {};
   const pf = Object.assign({}, PERM_DEFAULT_FUNC, cfg.permFuncionario || {}, { modules: Object.assign({}, PERM_DEFAULT_FUNC.modules, (cfg.permFuncionario || {}).modules || {}) });
-  const mods = [['pdv', 'PDV — Venda'], ['caixa', 'Caixa da Loja'], ['estoque', 'Estoque'], ['entrada', 'Entrada de Estoque'], ['vendasDia', 'Vendas do Dia'], ['dashboard', 'Dashboard'], ['compras', 'Compras'], ['fornecedores', 'Fornecedores'], ['usados', 'Avaliação de Usados'], ['trocas', 'Trocas'], ['movimentacoes', 'Movimentações'], ['garantias', 'Garantias'], ['financeiro', 'Financeiro'], ['relatorios', 'Relatórios'], ['config', 'Configurações']];
+  const mods = [['pdv', 'PDV — Venda'], ['caixa', 'Caixa da Loja'], ['estoque', 'Estoque'], ['entrada', 'Entrada de Estoque'], ['vendasDia', 'Vendas do Dia'], ['dashboard', 'Dashboard'], ['compras', 'Compras'], ['fornecedores', 'Fornecedores'], ['usados', 'Avaliação de Usados'], ['trocas', 'Trocas'], ['prevendas', 'Pré-venda / Reservas'], ['movimentacoes', 'Movimentações'], ['garantias', 'Garantias'], ['financeiro', 'Financeiro'], ['relatorios', 'Relatórios'], ['config', 'Configurações']];
   const flags = [['verFinanceiro', 'Ver custo, lucro e margem'], ['podeCancelar', 'Cancelar vendas'], ['podeDesconto', 'Dar desconto no PDV'], ['podeAlterarPreco', 'Alterar preço no PDV'], ['podeEditarProduto', 'Editar / excluir produtos'], ['podeSangria', 'Sangria / retirada do caixa']];
   const chk = (k, v, isMod) => `<label style="display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;cursor:pointer;font-size:13px"><input type="checkbox" ${v ? 'checked' : ''} onchange="Modules.cfgPermSet('${k}',this.checked,${isMod})"> ${k}</label>`;
   return `<div class="card" style="margin-top:18px">
@@ -5014,7 +5356,7 @@ const Theme = {
 
 /* ============ RICO GAMES ERP — Permissões ============ */
 const PERM_DEFAULT_FUNC = {
-  modules: { dashboard: false, vendasDia: true, pdv: true, caixa: true, estoque: true, entrada: false, compras: false, fornecedores: false, usados: false, trocas: false, movimentacoes: false, garantias: false, financeiro: false, relatorios: false, config: false },
+  modules: { dashboard: false, vendasDia: true, pdv: true, caixa: true, estoque: true, entrada: false, compras: false, fornecedores: false, usados: false, trocas: false, prevendas: true, movimentacoes: false, garantias: false, financeiro: false, relatorios: false, config: false },
   verFinanceiro: false, podeCancelar: false, podeDesconto: true, podeEditarProduto: true, podeSangria: true, podeAlterarPreco: false
 };
 
@@ -5023,7 +5365,7 @@ const App = {
   titles: {
     dashboard: 'Dashboard', vendasDia: 'Vendas do Dia', pdv: 'PDV — Ponto de Venda', caixa: 'Caixa da Loja', estoque: 'Estoque', entrada: 'Entrada de Estoque',
     compras: 'Compras', fornecedores: 'Fornecedores', usados: 'Avaliação de Usados',
-    trocas: 'Trocas e Usados', movimentacoes: 'Movimentações', garantias: 'Garantias',
+    trocas: 'Trocas e Usados', prevendas: 'Pré-venda / Reservas', movimentacoes: 'Movimentações', garantias: 'Garantias',
     financeiro: 'Financeiro', relatorios: 'Relatórios', config: 'Configurações'
   },
   current: 'dashboard',
@@ -5165,6 +5507,7 @@ const App = {
     if (route === 'movimentacoes') Modules.renderMovs();
     if (route === 'financeiro') Modules.finInit();
     if (route === 'relatorios') Modules.biInit();
+    if (route === 'prevendas') Modules.pvRender();
     view.scrollTop = 0; window.scrollTo(0, 0);
     this.toggleSidebar(false);
   },
