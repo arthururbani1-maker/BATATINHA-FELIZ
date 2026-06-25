@@ -548,29 +548,32 @@ const DB = (function () {
   ];
   let state = null;
 
+  function normalize() { COLLECTIONS.forEach(c => { if (!Array.isArray(state[c])) state[c] = []; }); }
   function load() {
     try { state = JSON.parse(localStorage.getItem(KEY)); } catch (e) { state = null; }
     if (!state || !state.produtos) { state = seed(); save(); }
-    COLLECTIONS.forEach(c => { if (!Array.isArray(state[c])) state[c] = []; });
+    normalize();
     return state;
   }
   function persist() { localStorage.setItem(KEY, JSON.stringify(state)); }
   function save() { persist(); if (typeof Cloud !== 'undefined' && Cloud.afterLocalSave) Cloud.afterLocalSave(); }
-  function importState(obj) { if (!obj) return; state = obj; persist(); }
+  function importState(obj) { if (!obj) return; state = obj; normalize(); persist(); } // garante todas as coleções (mesmo as novas vindas da nuvem)
   function all(c) { return state[c] || []; }
   function get(c, id) { return (state[c] || []).find(x => x.id === id); }
   function uid(p) { return p + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
   function insert(c, obj) {
+    if (!Array.isArray(state[c])) state[c] = [];
     if (!obj.id) obj.id = uid(c.slice(0, 3));
     obj.criadoEm = obj.criadoEm || new Date().toISOString();
     state[c].push(obj); save(); return obj;
   }
   function update(c, id, patch) {
+    if (!Array.isArray(state[c])) state[c] = [];
     const i = state[c].findIndex(x => x.id === id);
     if (i >= 0) { state[c][i] = Object.assign({}, state[c][i], patch); save(); return state[c][i]; }
   }
-  function remove(c, id) { state[c] = state[c].filter(x => x.id !== id); save(); }
+  function remove(c, id) { state[c] = (state[c] || []).filter(x => x.id !== id); save(); }
 
   /* ---- Movimentações: registro central de rastreabilidade ---- */
   function logMov(tipo, descricao, extra) {
