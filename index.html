@@ -496,6 +496,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 2.8 · pré-venda integrada</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -1415,7 +1416,7 @@ const Modules = {
         <td><div class="strong prod-link" style="cursor:pointer;color:var(--accent,#5b8cff)" onclick="ProdHist.open('${p.id}')" title="Ver histórico do produto">${esc(p.nome)} 🔎</div><div class="muted" style="font-size:11.5px">${p.sku}${p.serie ? ' · S/N ' + p.serie : ''}</div></td>
         <td>${p.categoria}<div class="muted" style="font-size:11px">${p.marca}</div></td>
         <td>${condBadge(p.condicao)}</td>
-        <td class="num ${p.qtd <= p.min ? 'down strong' : ''}" style="${p.qtd <= p.min ? 'color:var(--red)' : ''}">${p.qtd}${p.qtd <= p.min ? ' ⚠️' : ''}<div class="muted" style="font-size:11px">mín ${p.min}</div></td>
+        <td class="num ${p.qtd <= p.min ? 'down strong' : ''}" style="${p.qtd <= p.min ? 'color:var(--red)' : ''}">${p.qtd}${p.qtd <= p.min ? ' ⚠️' : ''}<div class="muted" style="font-size:11px">mín ${p.min}${p.reservado ? ' · <span style="color:var(--amber)" title="reservadas em pré-venda">' + p.reservado + ' res.</span>' : ''}</div></td>
         ${canFin ? `<td class="num">${Fmt.brl(p.custoMedio || p.custo)}</td>` : ''}
         <td class="num strong">${Fmt.brl(p.preco)}</td>
         ${canFin ? `<td class="num"><span class="badge b-green">${Fmt.pct((p.preco - (p.custoMedio || p.custo)) / p.preco * 100)}</span></td>` : ''}
@@ -1616,7 +1617,7 @@ const Modules = {
     setTimeout(() => { const e = document.getElementById('pdv-q'); if (e) e.focus(); }, 50);
     return `
     <div class="page-head"><div><h1>Ponto de Venda</h1><p>Busque pelo nome, SKU ou bipe o código de barras</p></div>
-      <div class="actions"><span class="pdv-kbd">↵ Enter adiciona</span><span class="pdv-kbd">Esc limpa</span></div></div>
+      <div class="actions"><button class="btn-ghost" onclick="Modules.pvPDVPanel()">📋 Pré-vendas / Reservas</button><span class="pdv-kbd">↵ Enter adiciona</span><span class="pdv-kbd">Esc limpa</span></div></div>
     <div class="pdv">
       <div class="pdv-main">
         <div class="pdv-searchbar"><span class="ic">🔎</span>
@@ -1627,18 +1628,19 @@ const Modules = {
     </div>`;
   },
   condColor(c) { return c === 'novo' ? 'var(--green)' : c === 'seminovo' ? 'var(--blue)' : 'var(--amber)'; },
+  disp(p) { return (p.qtd || 0) - (p.reservado || 0); }, // unidades disponíveis (descontando reservas de pré-venda)
   pdvSearch() {
     const q = (fval('pdv-q') || '').toLowerCase();
-    let list = DB.all('produtos').filter(p => p.qtd > 0 && p.status === 'disponivel');
+    let list = DB.all('produtos').filter(p => this.disp(p) > 0 && p.status === 'disponivel');
     if (q) list = list.filter(p => p.nome.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || (p.barcode || '').includes(q));
     list = list.slice(0, 24);
     document.getElementById('pdv-results').innerHTML = list.map(p => {
-      const low = p.qtd <= p.min;
+      const disp = this.disp(p), low = disp <= p.min;
       return `<div class="prod-card" onclick="Modules.addCart('${p.id}')">
         <span class="pc-bar" style="background:${this.condColor(p.condicao)}"></span>
         <div class="pc-head"><span class="pc-cat">${esc(p.categoria)}</span>${condBadge(p.condicao)}</div>
         <div class="pc-name">${esc(p.nome)}</div>
-        <div class="pc-foot"><span class="pc-price">${Fmt.brl(p.preco)}</span><span class="pc-stock ${low ? 'low' : ''}">${low ? '⚠ ' : ''}${p.qtd} un</span></div>
+        <div class="pc-foot"><span class="pc-price">${Fmt.brl(p.preco)}</span><span class="pc-stock ${low ? 'low' : ''}">${low ? '⚠ ' : ''}${disp} un${p.reservado ? ' <span class="muted" title="reservadas em pré-venda">(' + p.reservado + ' res.)</span>' : ''}</span></div>
         <div class="pc-sku">${p.sku}</div>
         <span class="pc-add">+</span>
       </div>`;
@@ -1650,13 +1652,14 @@ const Modules = {
     if (e.key !== 'Enter') return;
     const q = fval('pdv-q').toLowerCase();
     const exact = DB.all('produtos').find(p => p.barcode === fval('pdv-q') || p.sku.toLowerCase() === q);
-    if (exact && exact.qtd > 0) { this.addCart(exact.id); document.getElementById('pdv-q').value = ''; this.pdvSearch(); }
+    if (exact && this.disp(exact) > 0) { this.addCart(exact.id); document.getElementById('pdv-q').value = ''; this.pdvSearch(); }
   },
   addCart(id) {
     const p = DB.get('produtos', id);
+    const disp = this.disp(p);
     const ex = this.cart.itens.find(i => i.produtoId === id);
-    if (ex) { if (ex.qtd < p.qtd) ex.qtd++; else return Toast.warn('Estoque máximo atingido.'); }
-    else this.cart.itens.push({ produtoId: id, sku: p.sku, nome: p.nome, preco: p.preco, precoOriginal: p.preco, custo: p.custoMedio || p.custo, qtd: 1, max: p.qtd });
+    if (ex) { if (ex.qtd < disp) ex.qtd++; else return Toast.warn('Sem unidades disponíveis (estoque ou reserva).'); }
+    else this.cart.itens.push({ produtoId: id, sku: p.sku, nome: p.nome, preco: p.preco, precoOriginal: p.preco, custo: p.custoMedio || p.custo, qtd: 1, max: disp });
     this.renderCart();
   },
   cartQty(id, d) {
@@ -1877,11 +1880,20 @@ const Modules = {
           <button class="btn-ghost btn-sm" style="margin-top:8px" onclick="Modules.coAddLine()">+ Adicionar pagamento</button>
         </div>
         <div><div class="section-title">Resumo da venda</div><div id="co-sim"></div></div>
+      </div>
+      <div class="card" style="margin-top:14px;background:var(--bg-2)">
+        <label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-weight:600"><input type="checkbox" id="co-prevenda" onchange="Modules.coTogglePrevenda()"> 📋 Esta venda é uma pré-venda / reserva?</label>
+        <div id="co-pvfields" style="display:none;margin-top:10px">
+          <div class="form-grid"><div class="field"><label>Nome do cliente *</label><input id="co-pv-cliente"></div>
+          <div class="field"><label>Telefone / WhatsApp</label><input id="co-pv-tel" placeholder="11 99999-9999"></div></div>
+          <div class="muted" style="font-size:11.5px;margin-top:6px">Cria um pedido de pré-venda com nº próprio. O que estiver pago entra no financeiro; o estoque é reservado e só baixa na entrega. Não gera venda duplicada.</div>
+        </div>
       </div>`,
       foot: `<button class="btn-ghost" onclick="Modal.close()">Voltar</button><button class="btn-primary" id="co-confirm" onclick="Modules.confirmVenda()">✅ Confirmar venda</button>`
     });
     setTimeout(() => this.coRender(), 10);
   },
+  coTogglePrevenda() { const on = fchk('co-prevenda'); const el = document.getElementById('co-pvfields'); if (el) el.style.display = on ? 'block' : 'none'; const btn = document.getElementById('co-confirm'); if (btn) btn.textContent = on ? '📋 Registrar pré-venda' : '✅ Confirmar venda'; },
   coMethods() { return (typeof Taxas !== 'undefined') ? Taxas.ativas().map(t => t.key) : ['PIX', 'Dinheiro', 'Débito', 'Crédito à vista']; },
   coAddLine() { const soma = this.coPays.reduce((s, p) => s + (+p.valor || 0), 0); this.coPays.push({ method: 'Dinheiro', valor: Math.max(0, this.coCtx.total - soma) }); this.coRender(); },
   coDel(i) { this.coPays.splice(i, 1); this.coRender(); },
@@ -1903,7 +1915,8 @@ const Modules = {
     const restante = +(total - soma).toFixed(2);
     const excedenteCartao = +(nonCash - total).toFixed(2);
     const troco = soma > total ? +(soma - total).toFixed(2) : 0;
-    const invalido = restante > 0.01 || excedenteCartao > 0.01;
+    const ehPrevenda = fchk('co-prevenda');
+    const invalido = (!ehPrevenda && restante > 0.01) || excedenteCartao > 0.01;
     const usadoVal = this.coCtx.usadoVal || 0, totalVenda = this.coCtx.totalVenda != null ? this.coCtx.totalVenda : total;
     document.getElementById('co-sim').innerHTML = `
       <div class="card" style="background:var(--bg-2)">
@@ -1924,6 +1937,13 @@ const Modules = {
     const usadoVal = this.coCtx.usadoVal || 0;
     const soma = pays.reduce((s, p) => s + (+p.valor || 0), 0);
     const cash = pays.filter(p => p.method === 'Dinheiro').reduce((s, p) => s + (+p.valor || 0), 0);
+    // ----- Pré-venda / reserva: cria pedido único em vez de venda concluída -----
+    if (fchk('co-prevenda')) {
+      const cliente = fval('co-pv-cliente');
+      if (!cliente) return Toast.err('Informe o nome do cliente para a pré-venda.');
+      if ((soma - cash) > total + 0.01) return Toast.err('Pagamentos eletrônicos excedem o total. Ajuste os valores.');
+      return this.pvFromCart(cliente, fval('co-pv-tel'), pays);
+    }
     if (soma < total - 0.01) return Toast.err('Ainda falta ' + Fmt.brl(total - soma) + ' a pagar.');
     if ((soma - cash) > total + 0.01) return Toast.err('Pagamentos eletrônicos excedem o total. Ajuste os valores.');
     const pagamentos = pays.map(p => { const pg = this.coMethodToPag(p.method, +p.valor || 0); pg.taxa = (typeof Taxas !== 'undefined') ? Taxas.feeByKey(p.method, +p.valor || 0) : 0; return pg; });
@@ -2696,136 +2716,148 @@ const ProdHist = {
 
 </script>
   <script>
-/* ============ RICO GAMES ERP — Pré-venda / Reservas ============ */
+/* ============ RICO GAMES ERP — Pré-venda / Reservas (pedido único integrado) ============ */
 const PV = {
-  STATUS: {
-    reservado: ['Reservado', 'b-blue'], aguardando: ['Aguardando pagamento', 'b-amber'],
-    parcial: ['Parcialmente pago', 'b-amber'], pago: ['Pago', 'b-green'],
-    vencido: ['Vencido', 'b-red'], cancelado: ['Cancelado', 'b-gray'], entregue: ['Entregue', 'b-purple']
-  },
+  PAY: { nao_pago: ['Não pago', 'b-gray'], parcial: ['Parcialmente pago', 'b-amber'], pago: ['Pago', 'b-green'], vencido: ['Vencido', 'b-red'], cancelado: ['Cancelado', 'b-gray'] },
+  ENT: { aguardando: ['Aguardando produto', 'b-amber'], disponivel: ['Disponível p/ retirada', 'b-blue'], entregue: ['Entregue', 'b-green'], cancelado: ['Cancelado', 'b-gray'] },
   pago(pv) { return (pv.pagamentos || []).reduce((s, p) => s + (p.valor || 0), 0); },
   restante(pv) { return Math.max(0, (pv.valorTotal || 0) - this.pago(pv)); },
   todayStart() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; },
   limite(pv) { return pv.dataLimite ? new Date(pv.dataLimite + 'T23:59:59') : null; },
-  overdue(pv) { const l = this.limite(pv); return l && l < this.todayStart(); },
+  overdue(pv) { const l = this.limite(pv); return l && l < this.todayStart() && this.restante(pv) > 0.009; },
   diasAteLimite(pv) { const l = this.limite(pv); if (!l) return null; return Math.ceil((l - this.todayStart()) / 86400000); },
-  status(pv) {
+  payStatus(pv) {
     if (pv.cancelado) return 'cancelado';
-    if (pv.entregue) return 'entregue';
-    const rest = this.restante(pv);
-    if (rest <= 0.009) return 'pago';
-    const od = this.overdue(pv);
-    if (this.pago(pv) > 0) return od ? 'vencido' : 'parcial';
-    return od ? 'vencido' : 'reservado';
+    if (this.restante(pv) <= 0.009) return 'pago';
+    if (this.overdue(pv)) return 'vencido';
+    return this.pago(pv) > 0 ? 'parcial' : 'nao_pago';
   },
-  badge(pv) { const s = this.status(pv), m = this.STATUS[s] || ['—', 'b-gray']; return `<span class="badge ${m[1]}">${m[0]}</span>`; }
+  entStatus(pv) { if (pv.cancelado) return 'cancelado'; return pv.statusEntrega || (pv.entregue ? 'entregue' : 'aguardando'); },
+  payBadge(pv) { const m = this.PAY[this.payStatus(pv)] || ['—', 'b-gray']; return `<span class="badge ${m[1]}">${m[0]}</span>`; },
+  entBadge(pv) { const m = this.ENT[this.entStatus(pv)] || ['—', 'b-gray']; return `<span class="badge ${m[1]}">${m[0]}</span>`; },
+  nextNum() { let max = 1049; DB.all('prevendas').forEach(p => { if ((p.numero || 0) > max) max = p.numero; }); DB.all('vendas').forEach(v => { if ((v.numero || 0) > max) max = v.numero; }); return max + 1; },
+  items(pv) { return (pv.itens && pv.itens.length) ? pv.itens : [{ produtoId: pv.produtoId, sku: pv.sku, nome: pv.produtoNome, qtd: pv.qtd, preco: pv.valorUnit || (pv.valorTotal / (pv.qtd || 1)), custo: pv.custoUnit || 0 }]; },
+  available(pr) { return (pr.qtd || 0) - (pr.reservado || 0); },
+  /* registra o pagamento no financeiro (valor REAL recebido) e no caixa quando dinheiro */
+  logPayFin(pv, p) {
+    const taxa = (typeof Taxas !== 'undefined') ? Taxas.feeByKey(p.forma, p.valor) : 0;
+    const fin = DB.logFin({ tipo: 'entrada', categoria: 'Pré-venda', subcategoria: p.forma, descricao: 'Pré-venda #' + pv.numero + ' — ' + pv.cliente + ' (' + p.forma + ')', valor: p.valor, taxa, liquido: p.valor - taxa, status: 'pago', origem: 'prevenda', refId: pv.id, formaPagamento: p.forma });
+    p.finId = fin.id;
+    if (p.forma === 'Dinheiro' && typeof Caixa !== 'undefined' && Caixa.add) {
+      const cx = Caixa.add({ fluxo: 'entrada', tipo: 'Pré-venda', origem: 'Pré-venda #' + pv.numero, categoria: 'Pré-venda', valor: p.valor, obs: pv.produtoNome + ' — ' + pv.cliente, refId: pv.id });
+      if (cx && cx.id) p.caixaId = cx.id;
+    }
+    return p;
+  },
+  reserve(pv) { this.items(pv).forEach(it => { if (it.produtoId) { const pr = DB.get('produtos', it.produtoId); if (pr) DB.update('produtos', it.produtoId, { reservado: (pr.reservado || 0) + it.qtd }); } }); },
+  release(pv) { this.items(pv).forEach(it => { if (it.produtoId) { const pr = DB.get('produtos', it.produtoId); if (pr) DB.update('produtos', it.produtoId, { reservado: Math.max(0, (pr.reservado || 0) - it.qtd) }); } }); },
+  baixaEntrega(pv) {
+    this.items(pv).forEach(it => {
+      if (!it.produtoId) return;
+      const pr = DB.get('produtos', it.produtoId); if (!pr) return;
+      const novaQtd = Math.max(0, (pr.qtd || 0) - it.qtd);
+      DB.update('produtos', it.produtoId, { qtd: novaQtd, reservado: Math.max(0, (pr.reservado || 0) - it.qtd), status: novaQtd <= 0 ? 'vendido' : pr.status });
+    });
+  }
 };
-
-Modules.pvFilters = { busca: '', status: '', prod: '', de: '', ate: '' };
 
 Modules.prevendas = function () {
   setTimeout(() => Modules.pvRender(), 20);
   return `
-  <div class="page-head"><div><h1>Pré-venda / Reservas</h1><p>Quem reservou, quem pagou, quem ainda precisa pagar e quanto falta receber</p></div>
+  <div class="page-head"><div><h1>Pré-venda / Reservas</h1><p>Pedidos reservados: quem pagou, quem falta pagar e quem já pode retirar</p></div>
     <div class="actions"><button class="btn-primary" onclick="Modules.pvForm()">+ Nova reserva</button></div></div>
   <div class="grid kpis" id="pv-kpis" style="margin-bottom:16px"></div>
   <div id="pv-alertas" style="margin-bottom:16px"></div>
   <div class="toolbar" style="flex-wrap:wrap;gap:8px">
     <select id="pv-fstatus" onchange="Modules.pvRender()">
       <option value="">Todos os status</option>
-      <option value="reservado">Reservado</option><option value="parcial">Parcialmente pago</option>
+      <option value="nao_pago">Não pago</option><option value="parcial">Parcialmente pago</option>
       <option value="pago">Pago</option><option value="vencido">Vencido</option>
+      <option value="aguardando">Aguardando produto</option><option value="disponivel">Disponível p/ retirada</option>
       <option value="entregue">Entregue</option><option value="cancelado">Cancelado</option>
-      <option value="naopagos">Não pagos (restante &gt; 0)</option>
+      <option value="naopagos">Em aberto (restante &gt; 0)</option>
     </select>
     <input id="pv-fprod" placeholder="Filtrar por produto..." oninput="Modules.pvRender()">
-    <span style="display:inline-flex;gap:6px;align-items:center"><span class="muted" style="font-size:12px">limite</span><input type="date" id="pv-fde" onchange="Modules.pvRender()"><span class="muted">a</span><input type="date" id="pv-fate" onchange="Modules.pvRender()"></span>
-    <input class="grow" id="pv-fbusca" placeholder="Buscar cliente ou telefone..." oninput="Modules.pvRender()">
+    <input class="grow" id="pv-fbusca" placeholder="Buscar cliente, telefone ou nº do pedido..." oninput="Modules.pvRender()">
   </div>
   <div id="pv-table" style="margin-top:8px"></div>`;
 };
 
 Modules.pvData = function () {
   const status = fval('pv-fstatus'), prod = (fval('pv-fprod') || '').toLowerCase(), busca = (fval('pv-fbusca') || '').toLowerCase();
-  const de = fval('pv-fde'), ate = fval('pv-fate');
   let list = DB.all('prevendas').slice().sort((a, b) => {
-    const sa = PV.status(a), sb = PV.status(b);
-    const rank = { vencido: 0, parcial: 1, reservado: 2, pago: 3, entregue: 4, cancelado: 5 };
-    if (rank[sa] !== rank[sb]) return rank[sa] - rank[sb];
-    return (PV.limite(a) || 0) - (PV.limite(b) || 0);
+    const rank = { vencido: 0, parcial: 1, nao_pago: 2, pago: 3, cancelado: 5 };
+    const sa = rank[PV.payStatus(a)] ?? 4, sb = rank[PV.payStatus(b)] ?? 4;
+    if (sa !== sb) return sa - sb;
+    return (b.numero || 0) - (a.numero || 0);
   });
-  list = list.filter(pv => {
-    const st = PV.status(pv);
+  return list.filter(pv => {
+    const ps = PV.payStatus(pv), es = PV.entStatus(pv);
     if (status === 'naopagos') { if (PV.restante(pv) <= 0.009 || pv.cancelado) return false; }
-    else if (status && st !== status) return false;
+    else if (status && status !== ps && status !== es) return false;
     if (prod && !(pv.produtoNome || '').toLowerCase().includes(prod)) return false;
-    if (busca && !((pv.cliente || '').toLowerCase().includes(busca) || (pv.telefone || '').toLowerCase().includes(busca))) return false;
-    if (de && (!pv.dataLimite || pv.dataLimite < de)) return false;
-    if (ate && (!pv.dataLimite || pv.dataLimite > ate)) return false;
+    if (busca && !((pv.cliente || '').toLowerCase().includes(busca) || (pv.telefone || '').toLowerCase().includes(busca) || String(pv.numero || '').includes(busca))) return false;
     return true;
   });
-  return list;
 };
 
 Modules.pvRender = function () {
   if (!document.getElementById('pv-kpis')) return;
-  const all = DB.all('prevendas');
-  const ativas = all.filter(p => !p.cancelado);
+  const ativas = DB.all('prevendas').filter(p => !p.cancelado);
   const totReservas = ativas.length;
+  const totVendido = ativas.reduce((s, p) => s + (p.valorTotal || 0), 0);
   const totPago = ativas.reduce((s, p) => s + PV.pago(p), 0);
   const totPend = ativas.filter(p => !p.entregue).reduce((s, p) => s + PV.restante(p), 0);
-  const nPagos = ativas.filter(p => PV.restante(p) <= 0.009).length;
   const nPend = ativas.filter(p => PV.restante(p) > 0.009).length;
-  const nVenc = ativas.filter(p => PV.status(p) === 'vencido').length;
+  const nVenc = ativas.filter(p => PV.payStatus(p) === 'vencido').length;
+  const nRetirar = ativas.filter(p => !p.entregue && PV.restante(p) <= 0.009).length;
   document.getElementById('pv-kpis').innerHTML =
-    kpi('Total de reservas', Fmt.num(totReservas), ativas.length + ' ativas', '📋', 'blue') +
-    kpi('Total já pago', Fmt.brl(totPago), nPagos + ' cliente(s) quitados', '💰', 'green') +
-    kpi('Total pendente', Fmt.brl(totPend), 'a receber', '⏳', 'amber') +
-    kpi('Clientes pendentes', Fmt.num(nPend), nVenc + ' vencido(s)', '🔔', nVenc ? 'red' : '');
+    kpi('Reservas ativas', Fmt.num(totReservas), Fmt.brl(totVendido) + ' reservado', '📋', 'blue') +
+    kpi('Total recebido', Fmt.brl(totPago), 'já no financeiro', '💰', 'green') +
+    kpi('A receber', Fmt.brl(totPend), nPend + ' pedido(s) em aberto', '⏳', 'amber') +
+    kpi('Prontas p/ retirar', Fmt.num(nRetirar), nVenc + ' vencida(s)', '📦', nVenc ? 'red' : 'purple');
 
   // ---- Alertas ----
-  const venc = [], hoje = [], breve = [], entregar = [];
+  const venc = [], hoje = [], breve = [], retirar = [];
   ativas.forEach(p => {
-    const st = PV.status(p);
-    if (st === 'entregue') return;
-    if (st === 'pago') { entregar.push(p); return; }
-    const d = PV.diasAteLimite(p);
-    if (st === 'vencido') venc.push(p);
+    if (p.entregue) return;
+    if (PV.restante(p) <= 0.009) { retirar.push(p); return; }
+    const ps = PV.payStatus(p), d = PV.diasAteLimite(p);
+    if (ps === 'vencido') venc.push(p);
     else if (d === 0) hoje.push(p);
     else if (d != null && d > 0 && d <= 3) breve.push(p);
   });
-  const alertCard = (titulo, arr, cls, ico) => arr.length ? `<div class="pv-alert ${cls}"><div class="pv-alert-h">${ico} ${titulo} <span class="badge b-gray">${arr.length}</span></div>
-    <div class="pv-alert-list">${arr.slice(0, 6).map(p => `<span class="pv-chip" onclick="Modules.pvPagar('${p.id}')">${esc(p.cliente)} · ${esc(p.produtoNome)} · ${Fmt.brl(PV.restante(p))}${p.dataLimite ? ' · ' + Fmt.date(p.dataLimite + 'T12:00:00') : ''}</span>`).join('')}</div></div>` : '';
-  const alertas = alertCard('Pagamento vencido', venc, 'red', '🚨') + alertCard('Vence hoje', hoje, 'amber', '⏰') +
-    alertCard('Vence nos próximos 3 dias', breve, 'blue', '📅') + alertCard('Pagas — aguardando entrega', entregar, 'green', '📦');
-  document.getElementById('pv-alertas').innerHTML = alertas || '';
+  const ac = (titulo, arr, cls, ico) => arr.length ? `<div class="pv-alert ${cls}"><div class="pv-alert-h">${ico} ${titulo} <span class="badge b-gray">${arr.length}</span></div>
+    <div class="pv-alert-list">${arr.slice(0, 8).map(p => `<span class="pv-chip" onclick="Modules.pvDetail('${p.id}')">#${p.numero} ${esc(p.cliente)} · ${esc(p.produtoNome)} · ${cls === 'green' ? 'pago' : Fmt.brl(PV.restante(p))}</span>`).join('')}</div></div>` : '';
+  document.getElementById('pv-alertas').innerHTML =
+    ac('Pagamento vencido', venc, 'red', '🚨') + ac('Vence hoje', hoje, 'amber', '⏰') +
+    ac('Vence em até 3 dias', breve, 'blue', '📅') + ac('Pagas — prontas para retirada', retirar, 'green', '📦');
 
   // ---- Tabela ----
-  const list = this.pvData();
-  const rows = list.map(p => {
-    const st = PV.status(p), rest = PV.restante(p), pago = PV.pago(p);
-    const podeEntregar = !p.entregue && !p.cancelado && rest <= 0.009;
-    const ativo = !p.entregue && !p.cancelado;
+  const rows = this.pvData().map(p => {
+    const rest = PV.restante(p), ativo = !p.entregue && !p.cancelado, es = PV.entStatus(p);
     return `<tr>
+      <td class="strong">#${p.numero || '—'}</td>
       <td><div class="strong">${esc(p.cliente)}</div><div class="muted" style="font-size:11px">${esc(p.telefone || '—')}</div></td>
-      <td>${esc(p.produtoNome)}<div class="muted" style="font-size:11px">${p.qtd} un</div></td>
+      <td>${esc(p.produtoNome)}<div class="muted" style="font-size:11px">${p.qtd} un${p.dataLimite ? ' · limite ' + Fmt.date(p.dataLimite + 'T12:00:00') : ''}</div></td>
       <td class="num">${Fmt.brl(p.valorTotal)}</td>
-      <td class="num" style="color:var(--green)">${Fmt.brl(pago)}</td>
+      <td class="num" style="color:var(--green)">${Fmt.brl(PV.pago(p))}</td>
       <td class="num strong" style="color:${rest > 0 ? 'var(--red)' : 'var(--green)'}">${Fmt.brl(rest)}</td>
-      <td>${p.dataLimite ? Fmt.date(p.dataLimite + 'T12:00:00') : '—'}${st === 'vencido' ? ' <span style="color:var(--red)">⚠️</span>' : ''}</td>
-      <td>${PV.badge(p)}</td>
+      <td>${PV.payBadge(p)}</td>
+      <td>${PV.entBadge(p)}</td>
       <td class="num pv-actions">
         ${ativo && rest > 0.009 ? `<button class="btn-icon" title="Registrar pagamento" onclick="Modules.pvPagar('${p.id}')">💵</button>` : ''}
-        ${podeEntregar ? `<button class="btn-icon" title="Marcar como entregue (vira venda)" onclick="Modules.pvEntregar('${p.id}')">📦</button>` : ''}
+        ${ativo && es === 'aguardando' ? `<button class="btn-icon" title="Marcar disponível p/ retirada" onclick="Modules.pvDisponivel('${p.id}')">🟦</button>` : ''}
+        ${ativo && rest <= 0.009 ? `<button class="btn-icon" title="Entregar (baixa no estoque)" onclick="Modules.pvEntregar('${p.id}')">📦</button>` : ''}
         ${p.telefone ? `<button class="btn-icon" title="WhatsApp" onclick="Modules.pvWhats('${p.id}')">💬</button>` : ''}
         ${ativo ? `<button class="btn-icon" title="Editar" onclick="Modules.pvForm('${p.id}')">✏️</button>` : ''}
-        ${ativo ? `<button class="btn-icon" title="Cancelar reserva" onclick="Modules.pvCancel('${p.id}')">🗑️</button>` : ''}
+        ${ativo ? `<button class="btn-icon" title="Cancelar" onclick="Modules.pvCancel('${p.id}')">🗑️</button>` : ''}
         <button class="btn-icon" title="Detalhes" onclick="Modules.pvDetail('${p.id}')">🔎</button>
       </td></tr>`;
   }).join('');
   document.getElementById('pv-table').innerHTML = `<div class="table-wrap"><table>
-    <thead><tr><th>Cliente</th><th>Produto</th><th class="num">Total</th><th class="num">Pago</th><th class="num">Restante</th><th>Data limite</th><th>Status</th><th></th></tr></thead>
-    <tbody>${rows || '<tr><td colspan="8" class="muted" style="text-align:center;padding:34px">Nenhuma reserva encontrada.</td></tr>'}</tbody></table></div>`;
+    <thead><tr><th>Pedido</th><th>Cliente</th><th>Produto</th><th class="num">Total</th><th class="num">Pago</th><th class="num">Restante</th><th>Pagamento</th><th>Entrega</th><th></th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="9" class="muted" style="text-align:center;padding:34px">Nenhuma reserva encontrada.</td></tr>'}</tbody></table></div>`;
 };
 
 /* ---------- Cadastro / edição ---------- */
@@ -2833,20 +2865,23 @@ Modules.pvForm = function (id) {
   const p = id ? DB.get('prevendas', id) : {};
   const prods = DB.all('produtos').slice().sort((a, b) => a.nome.localeCompare(b.nome));
   const hoje = new Date().toISOString().slice(0, 10);
+  const formas = (typeof Taxas !== 'undefined') ? Taxas.ativas().map(t => t.key).concat(['Produto usado']) : ['PIX', 'Dinheiro', 'Débito', 'Crédito à vista', 'Produto usado'];
   Modal.open({
     title: id ? '✏️ Editar reserva' : '📋 Nova reserva', wide: true,
     body: `<div class="form-grid">
       <div class="field"><label>Nome do cliente *</label><input id="pv-cliente" value="${esc(p.cliente || '')}"></div>
       <div class="field"><label>Telefone / WhatsApp</label><input id="pv-tel" placeholder="11 99999-9999" value="${esc(p.telefone || '')}"></div>
       <div class="field full"><label>Produto reservado *</label><input id="pv-prod" list="pv-prodlist" placeholder="Ex: GTA VI PS5" value="${esc(p.produtoNome || '')}" onchange="Modules.pvPickProd()">
-        <datalist id="pv-prodlist">${prods.map(x => `<option value="${esc(x.nome)}" data-sku="${esc(x.sku)}">${x.sku} · ${Fmt.brl(x.preco)}</option>`).join('')}</datalist>
-        <div class="muted" style="font-size:11px;margin-top:3px">Pode ser um produto que ainda não chegou. Se já existir no estoque, a baixa será automática na entrega.</div></div>
+        <datalist id="pv-prodlist">${prods.map(x => `<option value="${esc(x.nome)}">${x.sku} · ${Fmt.brl(x.preco)} · ${PV.available(x)} disp.</option>`).join('')}</datalist>
+        <div class="muted" style="font-size:11px;margin-top:3px">Pode ser um produto que ainda não chegou. Se já houver em estoque, a unidade é reservada e a baixa ocorre na entrega.</div></div>
       <div class="field"><label>Quantidade</label><input id="pv-qtd" type="number" min="1" value="${p.qtd || 1}" oninput="Modules.pvCalcTotal()"></div>
       <div class="field"><label>Valor unitário (R$) <span class="muted" style="font-weight:400">opcional</span></label><input id="pv-unit" type="text" inputmode="decimal" placeholder="ex: 499,90" value="${p.valorUnit != null ? String(p.valorUnit).replace('.', ',') : ''}" oninput="Modules.pvCalcTotal()"></div>
       <div class="field"><label>Valor total da reserva (R$) *</label><input id="pv-total" type="text" inputmode="decimal" placeholder="ex: 499,90" value="${p.valorTotal != null ? String(p.valorTotal).replace('.', ',') : ''}"></div>
-      ${id ? '' : `<div class="field"><label>Sinal / entrada já pago (R$) <span class="muted" style="font-weight:400">opcional</span></label><input id="pv-sinal" type="text" inputmode="decimal" placeholder="0,00"></div>`}
+      ${id ? '' : `<div class="field"><label>Sinal / entrada já pago (R$) <span class="muted" style="font-weight:400">opcional</span></label><input id="pv-sinal" type="text" inputmode="decimal" placeholder="0,00"></div>
+      <div class="field"><label>Forma do pagamento inicial</label><select id="pv-forma">${formas.map(f => `<option>${esc(f)}</option>`).join('')}</select></div>`}
       <div class="field"><label>Data da reserva</label><input id="pv-datares" type="date" value="${p.dataReserva ? p.dataReserva.slice(0, 10) : hoje}"></div>
-      <div class="field"><label>Data limite para pagamento</label><input id="pv-limite" type="date" value="${p.dataLimite || ''}"></div>
+      <div class="field"><label>Data limite p/ pagamento</label><input id="pv-limite" type="date" value="${p.dataLimite || ''}"></div>
+      <div class="field"><label>Data prevista de entrega</label><input id="pv-entrega" type="date" value="${p.dataEntregaPrevista || ''}"></div>
       <div class="field full"><label>Observações</label><input id="pv-obs" value="${esc(p.obs || '')}"></div>
     </div>`,
     foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.pvSave('${id || ''}')">Salvar reserva</button>`
@@ -2868,27 +2903,33 @@ Modules.pvSave = function (id) {
   if (!produtoNome) return Toast.err('Informe o produto reservado.');
   let valorTotal = moneyBR(fval('pv-total'));
   const unitTmp = moneyBR(fval('pv-unit')), qtdTmp = parseInt(fval('pv-qtd')) || 1;
-  if ((isNaN(valorTotal) || valorTotal <= 0) && !isNaN(unitTmp) && unitTmp > 0) valorTotal = Math.round(unitTmp * qtdTmp * 100) / 100; // calcula a partir do unitário
+  if ((isNaN(valorTotal) || valorTotal <= 0) && !isNaN(unitTmp) && unitTmp > 0) valorTotal = Math.round(unitTmp * qtdTmp * 100) / 100;
   if (isNaN(valorTotal) || valorTotal <= 0) return Toast.err('Informe o valor total (ou o valor unitário) da reserva.');
   const linked = DB.all('produtos').find(x => x.nome.toLowerCase() === produtoNome.toLowerCase());
-  const data = {
+  const qtd = parseInt(fval('pv-qtd')) || 1;
+  const base = {
     cliente, telefone: fval('pv-tel'), produtoNome,
     produtoId: linked ? linked.id : null, sku: linked ? linked.sku : null,
-    qtd: parseInt(fval('pv-qtd')) || 1, valorUnit: moneyBR(fval('pv-unit')) || null, valorTotal,
+    qtd, valorUnit: (!isNaN(unitTmp) ? unitTmp : null), valorTotal, custoUnit: linked ? (linked.custoMedio || linked.custo || 0) : 0,
     dataReserva: (fval('pv-datares') || new Date().toISOString().slice(0, 10)) + 'T12:00:00',
-    dataLimite: fval('pv-limite') || '', obs: fval('pv-obs')
+    dataLimite: fval('pv-limite') || '', dataEntregaPrevista: fval('pv-entrega') || '', obs: fval('pv-obs')
   };
-  if (isNaN(data.valorUnit)) data.valorUnit = null;
   if (id) {
-    DB.update('prevendas', id, data);
+    DB.update('prevendas', id, base);
     Toast.ok('Reserva atualizada.');
   } else {
-    data.pagamentos = []; data.entregue = false; data.cancelado = false;
+    base.numero = PV.nextNum();
+    base.pagamentos = []; base.entregue = false; base.cancelado = false;
+    base.statusEntrega = (linked && PV.available(linked) >= qtd) ? 'disponivel' : 'aguardando';
+    const pv = DB.insert('prevendas', base);
     const sinal = moneyBR(fval('pv-sinal'));
-    if (!isNaN(sinal) && sinal > 0) data.pagamentos.push({ data: new Date().toISOString(), valor: Math.min(sinal, valorTotal), forma: 'Dinheiro' });
-    const pv = DB.insert('prevendas', data);
-    DB.logMov('reserva', 'Reserva criada: ' + produtoNome + ' — ' + cliente + ' (' + Fmt.brl(valorTotal) + ')', { valor: valorTotal, refId: pv.id });
-    Toast.ok('Reserva criada!');
+    if (!isNaN(sinal) && sinal > 0) {
+      const pagamentos = [PV.logPayFin(pv, { data: new Date().toISOString(), valor: Math.min(sinal, valorTotal), forma: fval('pv-forma') || 'Dinheiro', responsavel: (App.user() && App.user().nome) || 'Admin' })];
+      DB.update('prevendas', pv.id, { pagamentos });
+    }
+    if (linked && PV.available(linked) >= qtd) PV.reserve(pv); // reserva a unidade no estoque
+    DB.logMov('reserva', 'Pré-venda #' + pv.numero + ' criada: ' + produtoNome + ' — ' + cliente + ' (' + Fmt.brl(valorTotal) + ')', { valor: valorTotal, refId: pv.id });
+    Toast.ok('Reserva #' + pv.numero + ' criada!');
   }
   Modal.close(); App.go('prevendas');
 };
@@ -2897,9 +2938,9 @@ Modules.pvSave = function (id) {
 Modules.pvPagar = function (id) {
   const pv = DB.get('prevendas', id); if (!pv) return;
   const rest = PV.restante(pv);
-  const formas = (typeof Taxas !== 'undefined') ? Taxas.ativas().map(t => t.key) : ['PIX', 'Dinheiro', 'Débito', 'Crédito à vista'];
+  const formas = (typeof Taxas !== 'undefined') ? Taxas.ativas().map(t => t.key).concat(['Produto usado']) : ['PIX', 'Dinheiro', 'Débito', 'Crédito à vista', 'Produto usado'];
   Modal.open({
-    title: '💵 Registrar pagamento',
+    title: '💵 Registrar pagamento — Pedido #' + pv.numero,
     body: `<div class="card" style="background:var(--bg-2);margin-bottom:14px">
         <div class="mini-stat"><span>Cliente</span><b>${esc(pv.cliente)}</b></div>
         <div class="mini-stat"><span>Produto</span><b>${esc(pv.produtoNome)}</b></div>
@@ -2911,8 +2952,9 @@ Modules.pvPagar = function (id) {
         <div class="field"><label>Valor do pagamento (R$)</label><input id="pvp-valor" type="text" inputmode="decimal" value="${String(Math.round(rest * 100) / 100).replace('.', ',')}"></div>
         <div class="field"><label>Forma de pagamento</label><select id="pvp-forma">${formas.map(f => `<option>${esc(f)}</option>`).join('')}</select></div>
         <div class="field"><label>Data do pagamento</label><input id="pvp-data" type="date" value="${new Date().toISOString().slice(0, 10)}"></div>
+        <div class="field full"><label>Observação</label><input id="pvp-obs" placeholder="opcional"></div>
       </div>
-      <div style="margin-top:8px"><button class="btn-ghost btn-sm" onclick="document.getElementById('pvp-valor').value='${String(Math.round(rest * 100) / 100).replace('.', ',')}'">Pagar total</button></div>`,
+      <div class="muted" style="font-size:11.5px;margin-top:6px">O valor entra no financeiro na hora (entrada real recebida).</div>`,
     foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.pvPagarSave('${id}')">Confirmar pagamento</button>`
   });
 };
@@ -2920,68 +2962,109 @@ Modules.pvPagarSave = function (id) {
   const pv = DB.get('prevendas', id); if (!pv) return;
   const valor = moneyBR(fval('pvp-valor'));
   if (isNaN(valor) || valor <= 0) return Toast.err('Informe um valor válido.');
-  const rest = PV.restante(pv);
-  if (valor > rest + 0.01) return Toast.err('Valor maior que o restante (' + Fmt.brl(rest) + ').');
+  if (valor > PV.restante(pv) + 0.01) return Toast.err('Valor maior que o restante (' + Fmt.brl(PV.restante(pv)) + ').');
   const pagamentos = (pv.pagamentos || []).slice();
-  pagamentos.push({ data: (fval('pvp-data') || new Date().toISOString().slice(0, 10)) + 'T12:00:00', valor, forma: fval('pvp-forma') || 'Dinheiro' });
+  const p = PV.logPayFin(pv, { data: (fval('pvp-data') || new Date().toISOString().slice(0, 10)) + 'T12:00:00', valor, forma: fval('pvp-forma') || 'Dinheiro', obs: fval('pvp-obs') || '', responsavel: (App.user() && App.user().nome) || 'Admin' });
+  pagamentos.push(p);
   DB.update('prevendas', id, { pagamentos });
-  DB.logMov('reserva', 'Pagamento de reserva: ' + pv.cliente + ' — ' + Fmt.brl(valor) + ' (' + fval('pvp-forma') + ')', { valor, refId: id });
+  DB.logMov('reserva', 'Pagamento pré-venda #' + pv.numero + ': ' + Fmt.brl(valor) + ' (' + p.forma + ')', { valor, refId: id });
   const novoRest = PV.restante(DB.get('prevendas', id));
-  Toast.ok(novoRest <= 0.009 ? 'Reserva quitada! 🎉' : 'Pagamento registrado. Restante: ' + Fmt.brl(novoRest));
+  Toast.ok(novoRest <= 0.009 ? 'Pedido #' + pv.numero + ' quitado! 🎉' : 'Pagamento registrado. Restante: ' + Fmt.brl(novoRest));
   Modal.close(); App.go('prevendas');
 };
 
-/* ---------- Cancelar ---------- */
-Modules.pvCancel = function (id) {
+/* ---------- Marcar disponível ---------- */
+Modules.pvDisponivel = function (id) {
   const pv = DB.get('prevendas', id); if (!pv) return;
-  Modal.confirm('Cancelar a reserva de <b>' + esc(pv.cliente) + '</b> (' + esc(pv.produtoNome) + ')? Os valores pagos ficam registrados no histórico da reserva.', () => {
-    DB.update('prevendas', id, { cancelado: true, canceladoEm: new Date().toISOString() });
-    DB.logMov('reserva', 'Reserva cancelada: ' + pv.produtoNome + ' — ' + pv.cliente, { valor: 0, refId: id });
-    Toast.ok('Reserva cancelada.'); Modal.close(); App.go('prevendas');
-  }, 'Cancelar reserva');
+  DB.update('prevendas', id, { statusEntrega: 'disponivel' });
+  DB.logMov('reserva', 'Pré-venda #' + pv.numero + ' disponível para retirada — ' + pv.cliente, { valor: 0, refId: id });
+  Toast.ok('Marcada como disponível para retirada.'); App.go('prevendas');
 };
 
-/* ---------- Entregar → vira venda ---------- */
+/* ---------- Cancelar (reverte financeiro, caixa e reserva) ---------- */
+Modules.pvCancel = function (id) {
+  const pv = DB.get('prevendas', id); if (!pv) return;
+  Modal.confirm('Cancelar o pedido <b>#' + pv.numero + '</b> de <b>' + esc(pv.cliente) + '</b> (' + esc(pv.produtoNome) + ')?<br>Os pagamentos serão estornados do financeiro e a reserva de estoque liberada.', () => {
+    // estorna financeiro e caixa de cada pagamento
+    (pv.pagamentos || []).forEach(p => {
+      if (p.finId) DB.remove('financeiro', p.finId);
+      if (p.caixaId) DB.remove('caixa', p.caixaId);
+    });
+    if (!pv.entregue) PV.release(pv); // libera reserva (se não entregue)
+    DB.update('prevendas', id, { cancelado: true, statusEntrega: 'cancelado', canceladoEm: new Date().toISOString() });
+    DB.logMov('reserva', 'Pré-venda #' + pv.numero + ' cancelada — ' + pv.cliente + ' (estornos aplicados)', { valor: 0, refId: id });
+    Toast.ok('Pedido #' + pv.numero + ' cancelado e estornado.'); Modal.close(); App.go('prevendas');
+  }, 'Cancelar pedido');
+};
+
+/* ---------- Entregar → baixa definitiva (SEM criar venda duplicada) ---------- */
 Modules.pvEntregar = function (id) {
   const pv = DB.get('prevendas', id); if (!pv) return;
   if (PV.restante(pv) > 0.009) return Toast.err('Quite o pagamento antes de entregar (restante ' + Fmt.brl(PV.restante(pv)) + ').');
-  const prod = pv.produtoId ? DB.get('produtos', pv.produtoId) : null;
+  if (pv.entregue) return Toast.err('Este pedido já foi entregue.');
   let aviso = '';
-  if (!prod) aviso = '<div class="muted" style="margin-top:8px">⚠️ Produto não vinculado ao estoque — a venda será registrada, mas sem baixa automática de estoque.</div>';
-  else if (prod.qtd < pv.qtd) aviso = '<div class="muted" style="margin-top:8px">⚠️ Estoque atual (' + prod.qtd + ') menor que o reservado (' + pv.qtd + '). O estoque ficará negativo.</div>';
-  Modal.confirm('Confirmar entrega de <b>' + esc(pv.produtoNome) + '</b> para <b>' + esc(pv.cliente) + '</b>?<br>Isso vai gerar a venda, dar baixa no estoque e lançar no financeiro.' + aviso, () => {
-    Modules.pvConvert(pv);
-  }, 'Entregar e faturar');
+  const its = PV.items(pv).filter(it => it.produtoId);
+  if (!its.length) aviso = '<div class="muted" style="margin-top:8px">⚠️ Produto não vinculado ao estoque — será marcado como entregue sem baixa de estoque.</div>';
+  Modal.confirm('Confirmar entrega do pedido <b>#' + pv.numero + '</b> (' + esc(pv.produtoNome) + ') para <b>' + esc(pv.cliente) + '</b>?<br>O estoque terá baixa definitiva. O faturamento já foi registrado conforme os pagamentos.' + aviso, () => {
+    PV.baixaEntrega(pv);
+    DB.update('prevendas', id, { entregue: true, statusEntrega: 'entregue', entregueEm: new Date().toISOString() });
+    DB.logMov('venda', 'Pré-venda #' + pv.numero + ' ENTREGUE: ' + pv.qtd + 'x ' + pv.produtoNome + ' — ' + pv.cliente, { valor: pv.valorTotal, refId: id });
+    Toast.ok('Pedido #' + pv.numero + ' entregue! Estoque baixado.'); Modal.close(); App.go('prevendas');
+  }, 'Confirmar entrega');
 };
-Modules.pvConvert = function (pv) {
-  const prod = pv.produtoId ? DB.get('produtos', pv.produtoId) : null;
-  const custoUnit = prod ? (prod.custoMedio || prod.custo || 0) : 0;
-  const total = pv.valorTotal, qtd = pv.qtd, precoUnit = Math.round((total / qtd) * 100) / 100;
-  const custoTot = custoUnit * qtd;
-  // pagamentos agrupados por forma (a partir do que o cliente pagou na reserva)
-  const grupo = {};
-  (pv.pagamentos || []).forEach(p => { grupo[p.forma] = (grupo[p.forma] || 0) + p.valor; });
-  if (!Object.keys(grupo).length) grupo['Dinheiro'] = total;
-  const pagamentos = Object.entries(grupo).map(([forma, valor]) => {
-    const taxa = (typeof Taxas !== 'undefined') ? Taxas.feeByKey(forma, valor) : 0;
-    return { tipo: forma, valor: Math.round(valor * 100) / 100, parcelas: 1, taxa };
+
+/* ---------- Criar pré-venda a partir do carrinho do PDV ---------- */
+Modules.pvFromCart = function (cliente, telefone, pays) {
+  const c = this.cart;
+  const valorTotal = Math.max(0, c.itens.reduce((s, i) => s + i.preco * i.qtd, 0) - (c.desconto || 0));
+  const itens = c.itens.map(i => { const pr = DB.get('produtos', i.produtoId) || {}; return { produtoId: i.produtoId, sku: i.sku, nome: i.nome, qtd: i.qtd, preco: i.preco, custo: i.custo, categoria: pr.categoria || '', condicao: pr.condicao || 'novo' }; });
+  const numero = PV.nextNum();
+  const pv = DB.insert('prevendas', {
+    numero, cliente, telefone: telefone || '', produtoNome: itens.map(i => i.qtd + 'x ' + i.nome).join(', '),
+    produtoId: itens.length === 1 ? itens[0].produtoId : null, sku: itens.length === 1 ? itens[0].sku : null,
+    qtd: itens.reduce((s, i) => s + i.qtd, 0), itens, valorUnit: null, valorTotal, custoUnit: 0,
+    dataReserva: new Date().toISOString(), dataLimite: '', dataEntregaPrevista: '', obs: 'Gerada pelo PDV',
+    pagamentos: [], entregue: false, cancelado: false, statusEntrega: 'aguardando'
   });
-  const taxaTotal = pagamentos.reduce((s, p) => s + (p.taxa || 0), 0);
-  const operador = (typeof App !== 'undefined' && App.user() && App.user().nome) ? App.user().nome : 'Admin';
-  const venda = DB.insert('vendas', {
-    data: new Date().toISOString(),
-    itens: [{ produtoId: pv.produtoId || null, sku: pv.sku || '', nome: pv.produtoNome, qtd, preco: precoUnit, custo: custoUnit, categoria: prod ? prod.categoria : '', condicao: prod ? prod.condicao : 'novo' }],
-    bruto: total, desconto: 0, total, aPagar: total, custoTotal: custoTot,
-    lucro: total - custoTot, taxaTotal, liquido: total - taxaTotal, lucroLiquido: total - taxaTotal - custoTot,
-    pagamentos, recebido: total, troco: 0, usados: [], usuario: operador, origem: 'prevenda', prevendaId: pv.id
+  let pags = [];
+  (pays || []).forEach(p => { if ((+p.valor || 0) > 0) pags.push(PV.logPayFin(pv, { data: new Date().toISOString(), valor: +p.valor, forma: p.method, parcelas: p.parcelas || 1, responsavel: (App.user() && App.user().nome) || 'Admin' })); });
+  DB.update('prevendas', pv.id, { pagamentos: pags });
+  // reserva estoque das unidades que existem
+  itens.forEach(it => { if (it.produtoId) { const pr = DB.get('produtos', it.produtoId); if (pr && PV.available(pr) >= it.qtd) DB.update('produtos', it.produtoId, { reservado: (pr.reservado || 0) + it.qtd }); } });
+  DB.logMov('reserva', 'Pré-venda #' + numero + ' criada no PDV — ' + cliente + ' (' + Fmt.brl(valorTotal) + ')', { valor: valorTotal, refId: pv.id });
+  this.clearCart(); this.pdvSearch();
+  Modal.close();
+  Toast.ok('Pré-venda #' + numero + ' registrada! Veja em Pré-venda / Reservas.');
+};
+
+/* ---------- Painel de pré-vendas dentro do PDV ---------- */
+Modules.pvPDVPanel = function () {
+  Modal.open({
+    title: '📋 Pré-vendas / Reservas', wide: true,
+    body: `<input id="pvpdv-q" class="grow" style="width:100%;margin-bottom:12px" placeholder="Buscar por nº do pedido, cliente, telefone ou produto..." oninput="Modules.pvPDVList()" autofocus>
+      <div id="pvpdv-list"></div>`,
+    foot: `<button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
   });
-  if (prod) DB.update('produtos', pv.produtoId, { qtd: prod.qtd - qtd, status: (prod.qtd - qtd) <= 0 ? 'vendido' : prod.status });
-  DB.logMov('venda', 'Pré-venda entregue: ' + qtd + 'x ' + pv.produtoNome + ' — ' + pv.cliente + ' (venda #' + venda.id.slice(-4) + ')', { valor: total, refId: venda.id });
-  DB.logFin({ tipo: 'entrada', categoria: 'Venda', descricao: 'Pré-venda entregue #' + venda.id.slice(-4) + ' — ' + pv.cliente, valor: total, taxa: taxaTotal, liquido: total - taxaTotal, status: 'pago', origem: 'venda', refId: venda.id });
-  const dinheiro = pagamentos.filter(p => p.tipo === 'Dinheiro').reduce((s, p) => s + p.valor, 0);
-  if (dinheiro > 0 && typeof Caixa !== 'undefined') Caixa.add({ fluxo: 'entrada', tipo: 'Venda em dinheiro', origem: 'Pré-venda entregue', categoria: 'Venda', valor: dinheiro, obs: pv.produtoNome + ' — ' + pv.cliente, refId: venda.id });
-  DB.update('prevendas', pv.id, { entregue: true, entregueEm: new Date().toISOString(), vendaId: venda.id });
-  Modal.close(); Toast.ok('Entregue e faturado! Venda #' + venda.id.slice(-4) + ' criada.'); App.go('prevendas');
+  setTimeout(() => Modules.pvPDVList(), 20);
+};
+Modules.pvPDVList = function () {
+  const host = document.getElementById('pvpdv-list'); if (!host) return;
+  const q = (fval('pvpdv-q') || '').toLowerCase();
+  let list = DB.all('prevendas').filter(p => !p.cancelado && !p.entregue).slice().sort((a, b) => (b.numero || 0) - (a.numero || 0));
+  if (q) list = list.filter(p => String(p.numero || '').includes(q) || (p.cliente || '').toLowerCase().includes(q) || (p.telefone || '').toLowerCase().includes(q) || (p.produtoNome || '').toLowerCase().includes(q));
+  host.innerHTML = list.length ? `<div class="table-wrap"><table>
+    <thead><tr><th>Pedido</th><th>Cliente</th><th>Produto</th><th class="num">Restante</th><th>Pagto.</th><th>Entrega</th><th></th></tr></thead>
+    <tbody>${list.slice(0, 30).map(p => { const rest = PV.restante(p); return `<tr>
+      <td class="strong">#${p.numero}</td>
+      <td>${esc(p.cliente)}<div class="muted" style="font-size:11px">${esc(p.telefone || '')}</div></td>
+      <td>${esc(p.produtoNome)}</td>
+      <td class="num strong" style="color:${rest > 0 ? 'var(--red)' : 'var(--green)'}">${Fmt.brl(rest)}</td>
+      <td>${PV.payBadge(p)}</td><td>${PV.entBadge(p)}</td>
+      <td class="num pv-actions">
+        ${rest > 0.009 ? `<button class="btn-icon" title="Registrar pagamento" onclick="Modules.pvPagar('${p.id}')">💵</button>` : ''}
+        ${rest <= 0.009 ? `<button class="btn-icon" title="Entregar" onclick="Modules.pvEntregar('${p.id}')">📦</button>` : ''}
+        <button class="btn-icon" title="Detalhes" onclick="Modules.pvDetail('${p.id}')">🔎</button></td></tr>`; }).join('')}</tbody></table></div>`
+    : '<div class="empty-state"><div class="big">📋</div>Nenhuma pré-venda em aberto.</div>';
 };
 
 /* ---------- WhatsApp ---------- */
@@ -2992,35 +3075,37 @@ Modules.pvWhats = function (id) {
   const num = tel.length <= 11 ? '55' + tel : tel;
   const rest = PV.restante(pv);
   let msg;
-  if (PV.status(pv) === 'pago') msg = `Olá ${pv.cliente}! Boa notícia: seu produto reservado *${pv.produtoNome}* está disponível para retirada na Rico Games. 🎮`;
-  else msg = `Olá ${pv.cliente}! Passando para lembrar da sua reserva do *${pv.produtoNome}* na Rico Games.\nValor total: ${Fmt.brl(pv.valorTotal)}\nJá pago: ${Fmt.brl(PV.pago(pv))}\nRestante: ${Fmt.brl(rest)}${pv.dataLimite ? `\nData limite: ${Fmt.date(pv.dataLimite + 'T12:00:00')}` : ''}`;
+  if (PV.entStatus(pv) === 'disponivel' || (rest <= 0.009 && !pv.entregue)) msg = `Olá ${pv.cliente}! Seu pedido *#${pv.numero}* (${pv.produtoNome}) está disponível para retirada na Rico Games. 🎮`;
+  else msg = `Olá ${pv.cliente}! Sobre sua reserva *#${pv.numero}* (${pv.produtoNome}) na Rico Games:\nValor total: ${Fmt.brl(pv.valorTotal)}\nJá pago: ${Fmt.brl(PV.pago(pv))}\nRestante: ${Fmt.brl(rest)}${pv.dataLimite ? `\nData limite: ${Fmt.date(pv.dataLimite + 'T12:00:00')}` : ''}`;
   window.open('https://wa.me/' + num + '?text=' + encodeURIComponent(msg), '_blank');
 };
 
 /* ---------- Detalhes ---------- */
 Modules.pvDetail = function (id) {
   const pv = DB.get('prevendas', id); if (!pv) return;
-  const pagsHtml = (pv.pagamentos || []).length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Forma</th><th class="num">Valor</th></tr></thead>
-    <tbody>${pv.pagamentos.map(p => `<tr><td>${Fmt.date(p.data)}</td><td>${esc(p.forma)}</td><td class="num strong" style="color:var(--green)">${Fmt.brl(p.valor)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum pagamento registrado ainda.</p>';
+  const pagsHtml = (pv.pagamentos || []).length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Forma</th><th>Resp.</th><th class="num">Valor</th></tr></thead>
+    <tbody>${pv.pagamentos.map(p => `<tr><td>${Fmt.date(p.data)}</td><td>${esc(p.forma)}${p.obs ? ' · ' + esc(p.obs) : ''}</td><td class="muted">${esc(p.responsavel || '—')}</td><td class="num strong" style="color:var(--green)">${Fmt.brl(p.valor)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum pagamento registrado ainda.</p>';
   Modal.open({
-    title: '🔎 Reserva — ' + esc(pv.cliente),
+    title: '🔎 Pedido #' + pv.numero + ' — ' + esc(pv.cliente),
     body: `<div class="card" style="background:var(--bg-2);margin-bottom:14px">
+        <div class="mini-stat"><span>Nº do pedido</span><b>#${pv.numero}</b></div>
         <div class="mini-stat"><span>Cliente</span><b>${esc(pv.cliente)}</b></div>
         <div class="mini-stat"><span>Telefone</span><b>${esc(pv.telefone || '—')}</b></div>
         <div class="mini-stat"><span>Produto</span><b>${esc(pv.produtoNome)} · ${pv.qtd} un</b></div>
-        <div class="mini-stat"><span>Data da reserva</span><b>${pv.dataReserva ? Fmt.date(pv.dataReserva) : '—'}</b></div>
-        <div class="mini-stat"><span>Data limite</span><b>${pv.dataLimite ? Fmt.date(pv.dataLimite + 'T12:00:00') : '—'}</b></div>
-        <div class="mini-stat"><span>Status</span><b>${PV.badge(pv)}</b></div>
+        <div class="mini-stat"><span>Reserva</span><b>${pv.dataReserva ? Fmt.date(pv.dataReserva) : '—'}</b></div>
+        <div class="mini-stat"><span>Limite pagamento</span><b>${pv.dataLimite ? Fmt.date(pv.dataLimite + 'T12:00:00') : '—'}</b></div>
+        <div class="mini-stat"><span>Entrega prevista</span><b>${pv.dataEntregaPrevista ? Fmt.date(pv.dataEntregaPrevista + 'T12:00:00') : '—'}</b></div>
+        <div class="mini-stat"><span>Status pagamento</span><b>${PV.payBadge(pv)}</b></div>
+        <div class="mini-stat"><span>Status entrega</span><b>${PV.entBadge(pv)}</b></div>
         ${pv.obs ? `<div class="mini-stat"><span>Observações</span><b>${esc(pv.obs)}</b></div>` : ''}
-        ${pv.vendaId ? `<div class="mini-stat"><span>Venda gerada</span><b>#${pv.vendaId.slice(-4)}</b></div>` : ''}
       </div>
-      <div class="section-title" style="margin:0 0 8px">Pagamentos</div>${pagsHtml}
+      <div class="section-title" style="margin:0 0 8px">Pagamentos (no financeiro)</div>${pagsHtml}
       <div class="card" style="background:var(--bg-2);margin-top:14px">
         <div class="mini-stat"><span>Valor total</span><b>${Fmt.brl(pv.valorTotal)}</b></div>
         <div class="mini-stat"><span>Total pago</span><b style="color:var(--green)">${Fmt.brl(PV.pago(pv))}</b></div>
         <div class="mini-stat" style="font-size:15px"><span class="strong">Restante</span><b style="color:${PV.restante(pv) > 0 ? 'var(--red)' : 'var(--green)'}">${Fmt.brl(PV.restante(pv))}</b></div>
       </div>`,
-    foot: `${(!pv.entregue && !pv.cancelado && PV.restante(pv) > 0.009) ? `<button class="btn-primary" style="margin-right:auto" onclick="Modal.close();Modules.pvPagar('${id}')">💵 Registrar pagamento</button>` : ''}<button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
+    foot: `${(!pv.entregue && !pv.cancelado && PV.restante(pv) > 0.009) ? `<button class="btn-primary" style="margin-right:auto" onclick="Modal.close();Modules.pvPagar('${id}')">💵 Pagamento</button>` : ''}${(!pv.entregue && !pv.cancelado && PV.restante(pv) <= 0.009) ? `<button class="btn-primary" style="margin-right:auto" onclick="Modal.close();Modules.pvEntregar('${id}')">📦 Entregar</button>` : ''}<button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
   });
 };
 
@@ -3059,6 +3144,8 @@ Modules.vendasDia = function () {
   <div class="grid kpis" id="vd-kpis" style="margin-bottom:18px"></div>
 
   <div style="margin-bottom:18px"><div class="section-title" id="vd-vcount">Vendas</div><div id="vd-vendas"></div></div>
+
+  <div id="vd-prevendas" style="margin-bottom:18px"></div>
 
   <div class="grid cols-2">
     <div><div class="section-title" id="vd-count">Produtos vendidos</div><div id="vd-table"></div></div>
@@ -3207,6 +3294,25 @@ Modules.vdRender = function () {
     <tbody>${rows || '<tr><td colspan="10" class="muted" style="text-align:center;padding:34px">Nenhuma venda no período selecionado.</td></tr>'}</tbody>
     ${canFin && d.items.length ? `<tfoot><tr style="font-weight:700;border-top:2px solid var(--line)"><td colspan="5">TOTAIS · ${d.qtdProd} un</td><td class="num">${Fmt.brl(d.custoTotal)}</td><td class="num">${Fmt.brl(d.fat)}</td><td class="num" style="color:${d.lucroLiquido >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(d.lucroLiquido)}</td><td colspan="2" class="muted" style="font-weight:500">Taxas: ${Fmt.brl(d.taxasCartao)}</td></tr></tfoot>` : ''}
     </table></div>`;
+
+  // ----- Pré-vendas / Reservas no período (pedidos com status especial) -----
+  const pvEl = document.getElementById('vd-prevendas');
+  if (pvEl && typeof PV !== 'undefined') {
+    const { start, end } = this.vdGetRange();
+    const pvs = DB.all('prevendas').filter(p => !p.cancelado).filter(p => { const dt = new Date(p.dataReserva || p.criadoEm); return dt >= start && dt <= end; }).sort((a, b) => (b.numero || 0) - (a.numero || 0));
+    if (pvs.length) {
+      const prows = pvs.map(p => `<tr style="cursor:pointer" onclick="Modules.pvDetail('${p.id}')">
+        <td class="strong">#${p.numero || '—'} <span class="badge b-purple">Pré-venda</span></td>
+        <td>${Fmt.time(p.dataReserva || p.criadoEm)}</td>
+        <td>${esc(p.cliente)}</td>
+        <td>${esc(p.produtoNome)}</td>
+        <td class="num strong">${Fmt.brl(p.valorTotal)}</td>
+        <td class="num" style="color:var(--green)">${Fmt.brl(PV.pago(p))}</td>
+        <td>${PV.payBadge(p)}</td><td>${PV.entBadge(p)}</td></tr>`).join('');
+      pvEl.innerHTML = `<div class="section-title">📋 Pré-vendas / Reservas <span class="muted" style="font-weight:500">${pvs.length} pedido(s) no período · mesmo número aparece aqui e na aba Pré-venda</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Pedido</th><th>Hora</th><th>Cliente</th><th>Produto</th><th class="num">Total</th><th class="num">Pago</th><th>Pagamento</th><th>Entrega</th></tr></thead><tbody>${prows}</tbody></table></div>`;
+    } else pvEl.innerHTML = '';
+  }
 
   // ranking
   const rk = {};
@@ -4814,7 +4920,7 @@ function periodOptsHtml(sel) { return [['all', 'Todo o período'], ['hoje', 'Hoj
 
 Modules.biState = { tab: 'geral', trend: 'dia', sel: [] };
 Modules.relatorios = function () {
-  const tabs = [['geral', '📊 Visão geral'], ['pagamentos', '💳 Formas de pagamento'], ['cross', '🔗 Vendas cruzadas'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['categorias', '🗂️ Categorias'], ['tendencias', '📈 Tendências'], ['rentab', '💎 Rentabilidade'], ['estoque', '📦 Estoque']];
+  const tabs = [['geral', '📊 Visão geral'], ['pagamentos', '💳 Formas de pagamento'], ['prevendas', '📋 Pré-vendas'], ['cross', '🔗 Vendas cruzadas'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['categorias', '🗂️ Categorias'], ['tendencias', '📈 Tendências'], ['rentab', '💎 Rentabilidade'], ['estoque', '📦 Estoque']];
   setTimeout(() => Modules.biRender(), 20);
   return `
   <div class="page-head"><div><h1>Business Intelligence</h1><p>Inteligência de vendas, margem e rentabilidade da Rico Games</p></div>
@@ -4825,14 +4931,14 @@ Modules.relatorios = function () {
 Modules.biInit = function () { this.biRender(); };
 Modules.biSetTab = function (t) {
   this.biState.tab = t;
-  const keys = ['geral', 'pagamentos', 'cross', 'rankings', 'pesquisa', 'categorias', 'tendencias', 'rentab', 'estoque'];
+  const keys = ['geral', 'pagamentos', 'prevendas', 'cross', 'rankings', 'pesquisa', 'categorias', 'tendencias', 'rentab', 'estoque'];
   document.querySelectorAll('#bi-subnav .tab').forEach((el, i) => el.classList.toggle('active', keys[i] === t));
   this.biRender();
 };
 Modules.biRender = function () {
   const b = document.getElementById('bi-body'); if (!b) return;
   const t = this.biState.tab;
-  b.innerHTML = ({ geral: this.biGeral, pagamentos: this.biPagamentos, cross: this.biCross, rankings: this.biRankings, pesquisa: this.biPesquisa, categorias: this.biCategorias, tendencias: this.biTendencias, rentab: this.biRentab, estoque: this.biEstoque })[t].call(this);
+  b.innerHTML = ({ geral: this.biGeral, pagamentos: this.biPagamentos, prevendas: this.biPrevendas, cross: this.biCross, rankings: this.biRankings, pesquisa: this.biPesquisa, categorias: this.biCategorias, tendencias: this.biTendencias, rentab: this.biRentab, estoque: this.biEstoque })[t].call(this);
   if (t === 'pesquisa') this.biCompara();
 };
 
@@ -5322,6 +5428,69 @@ Modules.biPagExport = function () {
   cur.list.forEach(x => aoa.push([x.key, x.vendas, r2(x.pctQtd), r2(x.valor), r2(x.pctFat), r2(x.taxa), r2(x.liquido)]));
   aoa.push(['TOTAL', cur.totVendas, 100, r2(cur.totFat), 100, r2(cur.totTaxa), r2(cur.totFat - cur.totTaxa)]);
   Exporter.xlsx('formas-pagamento-' + new Date().toISOString().slice(0, 10) + '.xlsx', 'Pagamentos', aoa);
+};
+
+/* ============ RELATÓRIO DE PRÉ-VENDAS ============ */
+Modules.biPrevendas = function () {
+  const all = DB.all('prevendas');
+  if (typeof PV === 'undefined') return '<div class="empty-state"><div class="big">📋</div>Módulo de pré-vendas indisponível.</div>';
+  const ativas = all.filter(p => !p.cancelado);
+  const canceladas = all.filter(p => p.cancelado);
+  const pagasAg = ativas.filter(p => !p.entregue && PV.restante(p) <= 0.009);   // pagas aguardando entrega
+  const parciais = ativas.filter(p => PV.pago(p) > 0 && PV.restante(p) > 0.009);
+  const pendentes = ativas.filter(p => PV.pago(p) <= 0.009 && !p.entregue);
+  const entregues = ativas.filter(p => p.entregue);
+  const totVendido = ativas.reduce((s, p) => s + (p.valorTotal || 0), 0);
+  const totRecebido = all.reduce((s, p) => s + (p.cancelado ? 0 : PV.pago(p)), 0);
+  const totPendente = ativas.filter(p => !p.entregue).reduce((s, p) => s + PV.restante(p), 0);
+
+  // produtos mais reservados
+  const rk = {};
+  ativas.forEach(p => { const k = p.produtoNome || '—'; rk[k] = rk[k] || { nome: k, qtd: 0, valor: 0 }; rk[k].qtd += (p.qtd || 1); rk[k].valor += (p.valorTotal || 0); });
+  const topProd = Object.values(rk).sort((a, b) => b.qtd - a.qtd).slice(0, 8);
+
+  const grupo = (titulo, arr, cor, ico) => `<div class="card" style="margin-bottom:14px">
+    <div class="section-title">${ico} ${titulo} <span class="badge ${cor}">${arr.length}</span></div>
+    ${arr.length ? `<div class="table-wrap"><table><thead><tr><th>Pedido</th><th>Cliente</th><th>Produto</th><th class="num">Total</th><th class="num">Pago</th><th class="num">Restante</th><th>Pagamento</th><th>Entrega</th></tr></thead>
+      <tbody>${arr.slice().sort((a, b) => (b.numero || 0) - (a.numero || 0)).map(p => `<tr>
+        <td class="strong">#${p.numero || '—'}</td><td>${esc(p.cliente)}</td><td>${esc(p.produtoNome)}</td>
+        <td class="num">${Fmt.brl(p.valorTotal)}</td><td class="num" style="color:var(--green)">${Fmt.brl(PV.pago(p))}</td>
+        <td class="num">${Fmt.brl(PV.restante(p))}</td><td>${PV.payBadge(p)}</td><td>${PV.entBadge(p)}</td></tr>`).join('')}</tbody></table></div>`
+      : '<p class="muted">Nenhum pedido nesta categoria.</p>'}</div>`;
+
+  return `
+  <div class="grid kpis" style="margin-bottom:16px">
+    ${kpi('Total em pré-venda', Fmt.brl(totVendido), ativas.length + ' reservas ativas', '📋', 'blue')}
+    ${kpi('Total recebido', Fmt.brl(totRecebido), 'já no financeiro', '💰', 'green')}
+    ${kpi('Total pendente', Fmt.brl(totPendente), 'a receber', '⏳', 'amber')}
+    ${kpi('Prontas p/ entrega', Fmt.num(pagasAg.length), 'pagas aguardando', '📦', 'purple')}
+  </div>
+  <div class="grid cols-2" style="margin-bottom:16px">
+    <div class="card"><div class="section-title">🏆 Produtos mais reservados</div>
+      ${topProd.length ? biRankRows(topProd, x => x.qtd, x => x.qtd + ' un reservadas', x => Fmt.brl(x.valor)) : '<p class="muted">Sem reservas ainda.</p>'}</div>
+    <div class="card"><div class="section-title">Resumo por situação</div>
+      <div class="mini-stat"><span>📦 Pagas aguardando entrega</span><b>${pagasAg.length}</b></div>
+      <div class="mini-stat"><span>💵 Parcialmente pagas</span><b>${parciais.length}</b></div>
+      <div class="mini-stat"><span>⏳ Pendentes (sem pagamento)</span><b>${pendentes.length}</b></div>
+      <div class="mini-stat"><span>✅ Entregues</span><b>${entregues.length}</b></div>
+      <div class="mini-stat"><span>🚫 Canceladas</span><b>${canceladas.length}</b></div>
+      <div style="margin-top:10px"><button class="btn-ghost btn-sm" onclick="Modules.biPrevExport()">⬇️ Exportar Excel</button></div></div>
+  </div>
+  ${grupo('Pagas — aguardando entrega', pagasAg, 'b-green', '📦')}
+  ${grupo('Parcialmente pagas', parciais, 'b-amber', '💵')}
+  ${grupo('Pendentes', pendentes, 'b-gray', '⏳')}
+  ${grupo('Entregues', entregues, 'b-blue', '✅')}
+  ${canceladas.length ? grupo('Canceladas', canceladas, 'b-gray', '🚫') : ''}`;
+};
+Modules.biPrevExport = function () {
+  const r2 = x => Math.round(x * 100) / 100;
+  const aoa = [['Rico Games — Pré-vendas / Reservas'], ['Gerado em', Fmt.date(new Date())], [],
+    ['Pedido', 'Cliente', 'Telefone', 'Produto', 'Qtd', 'Total', 'Pago', 'Restante', 'Status pagamento', 'Status entrega', 'Limite']];
+  DB.all('prevendas').slice().sort((a, b) => (b.numero || 0) - (a.numero || 0)).forEach(p => {
+    const ps = PV.PAY[PV.payStatus(p)] ? PV.PAY[PV.payStatus(p)][0] : '', es = PV.ENT[PV.entStatus(p)] ? PV.ENT[PV.entStatus(p)][0] : '';
+    aoa.push(['#' + (p.numero || ''), p.cliente, p.telefone || '', p.produtoNome, p.qtd, r2(p.valorTotal), r2(PV.pago(p)), r2(PV.restante(p)), ps, es, p.dataLimite || '']);
+  });
+  Exporter.xlsx('prevendas-rico-games-' + new Date().toISOString().slice(0, 10) + '.xlsx', 'Pre-vendas', aoa);
 };
 
 </script>
