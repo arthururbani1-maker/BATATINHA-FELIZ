@@ -425,6 +425,11 @@ td .muted,.muted{color:var(--txt-3)}
 .pv-actions{white-space:nowrap}
 .pv-actions .btn-icon{padding:4px 6px}
 
+/* ===== Dashboard de formas de pagamento ===== */
+.pag-cmp-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+.pag-cmp{background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+.pag-insight{background:var(--bg-2);border:1px solid var(--line);border-left:3px solid var(--accent,#5b8cff);border-radius:8px;padding:9px 12px;font-size:13px;line-height:1.4}
+
 </style>
   <script>
     /* Aplica o tema o quanto antes para evitar "flash" ao carregar */
@@ -496,7 +501,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 2.9.2 · excluir pré-vendas</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 3.1 · dashboard de taxas</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -1450,6 +1455,7 @@ const Modules = {
         <div class="field"><label>Status</label><select id="p-status">
           ${['disponivel', 'reservado', 'vendido', 'manutencao', 'garantia'].map(s => `<option value="${s}" ${p.status === s ? 'selected' : ''}>${s}</option>`).join('')}
         </select></div>
+        <div class="field full"><label style="display:flex;align-items:center;gap:9px;cursor:pointer"><input type="checkbox" id="p-prevenda" ${p.prevenda ? 'checked' : ''}> 📋 Produto em Pré-venda (pode ser vendido antes de chegar — não dá baixa no estoque até a entrega)</label></div>
       </div>
       ${(p.custoHist && p.custoHist.length) ? `<div style="margin-top:14px"><div style="font-size:12.5px;font-weight:700;color:var(--txt-2);margin-bottom:6px">Histórico de custo</div>${p.custoHist.slice(0, 6).map(h => `<div class="mini-stat"><span>${Fmt.datetime(h.data)} · ${esc(h.usuario || 'Admin')}</span><span>${Fmt.brl(h.de)} → <b>${Fmt.brl(h.para)}</b></span></div>`).join('')}</div>` : ''}`,
       foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.saveProduto('${id || ''}')">Salvar</button>`
@@ -1466,7 +1472,7 @@ const Modules = {
       nome, sku, barcode: fval('p-barcode'), categoria: fval('p-cat'), marca: fval('p-marca'),
       modelo: fval('p-modelo'), condicao: fval('p-cond'), qtd: parseInt(fval('p-qtd')) || 0,
       min: parseInt(fval('p-min')) || 0, custo, custoMedio: custo, preco,
-      serie: fval('p-serie'), local: fval('p-local'), status: fval('p-status')
+      serie: fval('p-serie'), local: fval('p-local'), status: fval('p-status'), prevenda: fchk('p-prevenda')
     };
     if (id) {
       const cur = DB.get('produtos', id) || {};
@@ -1636,16 +1642,16 @@ const Modules = {
   disp(p) { return (p.qtd || 0) - (p.reservado || 0); }, // unidades disponíveis (descontando reservas de pré-venda)
   pdvSearch() {
     const q = (fval('pdv-q') || '').toLowerCase();
-    let list = DB.all('produtos').filter(p => this.disp(p) > 0 && p.status === 'disponivel');
+    let list = DB.all('produtos').filter(p => (this.disp(p) > 0 || p.prevenda) && p.status === 'disponivel');
     if (q) list = list.filter(p => p.nome.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || (p.barcode || '').includes(q));
     list = list.slice(0, 24);
     document.getElementById('pdv-results').innerHTML = list.map(p => {
-      const disp = this.disp(p), low = disp <= p.min;
+      const disp = this.disp(p), low = disp <= p.min, isPre = !!p.prevenda;
       return `<div class="prod-card" onclick="Modules.addCart('${p.id}')">
-        <span class="pc-bar" style="background:${this.condColor(p.condicao)}"></span>
-        <div class="pc-head"><span class="pc-cat">${esc(p.categoria)}</span>${condBadge(p.condicao)}</div>
+        <span class="pc-bar" style="background:${isPre ? '#a855f7' : this.condColor(p.condicao)}"></span>
+        <div class="pc-head"><span class="pc-cat">${esc(p.categoria)}</span>${isPre ? '<span class="badge b-purple">Pré-venda</span>' : condBadge(p.condicao)}</div>
         <div class="pc-name">${esc(p.nome)}</div>
-        <div class="pc-foot"><span class="pc-price">${Fmt.brl(p.preco)}</span><span class="pc-stock ${low ? 'low' : ''}">${low ? '⚠ ' : ''}${disp} un${p.reservado ? ' <span class="muted" title="reservadas em pré-venda">(' + p.reservado + ' res.)</span>' : ''}</span></div>
+        <div class="pc-foot"><span class="pc-price">${Fmt.brl(p.preco)}</span><span class="pc-stock ${low && !isPre ? 'low' : ''}">${isPre ? '📋 sob encomenda' : (low ? '⚠ ' : '') + disp + ' un' + (p.reservado ? ' <span class="muted" title="reservadas">(' + p.reservado + ' res.)</span>' : '')}</span></div>
         <div class="pc-sku">${p.sku}</div>
         <span class="pc-add">+</span>
       </div>`;
@@ -1661,10 +1667,10 @@ const Modules = {
   },
   addCart(id) {
     const p = DB.get('produtos', id);
-    const disp = this.disp(p);
+    const disp = this.disp(p), isPre = !!p.prevenda;
     const ex = this.cart.itens.find(i => i.produtoId === id);
-    if (ex) { if (ex.qtd < disp) ex.qtd++; else return Toast.warn('Sem unidades disponíveis (estoque ou reserva).'); }
-    else this.cart.itens.push({ produtoId: id, sku: p.sku, nome: p.nome, preco: p.preco, precoOriginal: p.preco, custo: p.custoMedio || p.custo, qtd: 1, max: disp });
+    if (ex) { if (isPre || ex.qtd < disp) ex.qtd++; else return Toast.warn('Sem unidades disponíveis (estoque ou reserva).'); }
+    else this.cart.itens.push({ produtoId: id, sku: p.sku, nome: p.nome, preco: p.preco, precoOriginal: p.preco, custo: p.custoMedio || p.custo, qtd: 1, max: isPre ? 99999 : disp, prevenda: isPre });
     this.renderCart();
   },
   cartQty(id, d) {
@@ -1687,7 +1693,7 @@ const Modules = {
         ${c.itens.length ? c.itens.map(i => `
           <div class="cart-item">
             <span class="ci-thumb">${this.catIcon(i)}</span>
-            <div class="ci-name">${esc(i.nome)}<small>${i.precoOriginal != null && i.preco !== i.precoOriginal ? `<s style="color:var(--txt-3)">${Fmt.brl(i.precoOriginal)}</s> ` : ''}${App.can('podeAlterarPreco') ? `<a style="color:var(--green);cursor:pointer" onclick="Modules.precoEdit('${i.produtoId}')">${Fmt.brl(i.preco)} ✎</a>` : Fmt.brl(i.preco)} un.${i.precoMotivo ? ' · ' + esc(i.precoMotivo) : ''}</small></div>
+            <div class="ci-name">${esc(i.nome)}${i.prevenda ? ' <span class="badge b-purple" style="font-size:9px">Pré-venda</span>' : ''}<small>${i.precoOriginal != null && i.preco !== i.precoOriginal ? `<s style="color:var(--txt-3)">${Fmt.brl(i.precoOriginal)}</s> ` : ''}${App.can('podeAlterarPreco') ? `<a style="color:var(--green);cursor:pointer" onclick="Modules.precoEdit('${i.produtoId}')">${Fmt.brl(i.preco)} ✎</a>` : Fmt.brl(i.preco)} un.${i.precoMotivo ? ' · ' + esc(i.precoMotivo) : ''}</small></div>
             <div class="qty"><button onclick="Modules.cartQty('${i.produtoId}',-1)">−</button><b>${i.qtd}</b><button onclick="Modules.cartQty('${i.produtoId}',1)">+</button></div>
             <div class="strong" style="width:74px;text-align:right">${Fmt.brl(i.preco * i.qtd)}</div>
             <span class="ci-rm" title="Remover" onclick="Modules.cartRemove('${i.produtoId}')">✕</span>
@@ -1886,19 +1892,34 @@ const Modules = {
         </div>
         <div><div class="section-title">Resumo da venda</div><div id="co-sim"></div></div>
       </div>
-      <div class="card" style="margin-top:14px;background:var(--bg-2)">
-        <label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-weight:600"><input type="checkbox" id="co-prevenda" onchange="Modules.coTogglePrevenda()"> 📋 Esta venda é uma pré-venda / reserva?</label>
-        <div id="co-pvfields" style="display:none;margin-top:10px">
-          <div class="form-grid"><div class="field"><label>Nome do cliente *</label><input id="co-pv-cliente"></div>
-          <div class="field"><label>Telefone / WhatsApp</label><input id="co-pv-tel" placeholder="11 99999-9999"></div></div>
-          <div class="muted" style="font-size:11.5px;margin-top:6px">Cria um pedido de pré-venda com nº próprio. O que estiver pago entra no financeiro; o estoque é reservado e só baixa na entrega. Não gera venda duplicada.</div>
-        </div>
-      </div>`,
+      ${this._coClienteCard()}`,
       foot: `<button class="btn-ghost" onclick="Modal.close()">Voltar</button><button class="btn-primary" id="co-confirm" onclick="Modules.confirmVenda()">✅ Confirmar venda</button>`
     });
     setTimeout(() => this.coRender(), 10);
   },
-  coTogglePrevenda() { const on = fchk('co-prevenda'); const el = document.getElementById('co-pvfields'); if (el) el.style.display = on ? 'block' : 'none'; const btn = document.getElementById('co-confirm'); if (btn) btn.textContent = on ? '📋 Registrar pré-venda' : '✅ Confirmar venda'; },
+  _coClienteCard() {
+    const itensPre = this.cart.itens.filter(i => i.prevenda);
+    if (itensPre.length) {
+      // Há item de pré-venda no carrinho → cliente obrigatório (uma única venda, item entregue depois)
+      return `<div class="card" style="margin-top:14px;background:var(--bg-2);border:1px solid var(--purple,#a855f7)">
+        <div style="font-weight:700;margin-bottom:8px">📋 Esta venda contém ${itensPre.length} item(ns) em pré-venda</div>
+        <div class="muted" style="font-size:12px;margin-bottom:10px">${itensPre.map(i => '• ' + esc(i.nome) + ' (' + i.qtd + ' un)').join('<br>')}<br>Esses itens entram como <b>aguardando entrega</b> na mesma venda (um único pedido). Você entrega depois pela aba Pré-venda. Informe o cliente:</div>
+        <div class="form-grid"><div class="field"><label>Nome do cliente *</label><input id="co-pv-cliente"></div>
+        <div class="field"><label>Telefone / WhatsApp *</label><input id="co-pv-tel" placeholder="11 99999-9999"></div>
+        <div class="field full"><label>Data prevista de chegada/entrega (opcional)</label><input id="co-pv-data" type="date"></div></div>
+        <input type="hidden" id="co-prevenda" value="auto"></div>`;
+    }
+    // Venda comum: opção de tratar tudo como reserva (cliente paga/retira depois)
+    return `<div class="card" style="margin-top:14px;background:var(--bg-2)">
+        <label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-weight:600"><input type="checkbox" id="co-prevenda" onchange="Modules.coTogglePrevenda()"> 📋 Tratar como reserva (cliente vai pagar/retirar depois)</label>
+        <div id="co-pvfields" style="display:none;margin-top:10px">
+          <div class="form-grid"><div class="field"><label>Nome do cliente *</label><input id="co-pv-cliente"></div>
+          <div class="field"><label>Telefone / WhatsApp</label><input id="co-pv-tel" placeholder="11 99999-9999"></div></div>
+          <div class="muted" style="font-size:11.5px;margin-top:6px">Cria um pedido de reserva com nº próprio. O que estiver pago entra no financeiro; o estoque é reservado e só baixa na entrega.</div>
+        </div>
+      </div>`;
+  },
+  coTogglePrevenda() { const on = fchk('co-prevenda'); const el = document.getElementById('co-pvfields'); if (el) el.style.display = on ? 'block' : 'none'; const btn = document.getElementById('co-confirm'); if (btn) btn.textContent = on ? '📋 Registrar reserva' : '✅ Confirmar venda'; },
   coMethods() { return (typeof Taxas !== 'undefined') ? Taxas.ativas().map(t => t.key) : ['PIX', 'Dinheiro', 'Débito', 'Crédito à vista']; },
   coAddLine() { const soma = this.coPays.reduce((s, p) => s + (+p.valor || 0), 0); this.coPays.push({ method: 'Dinheiro', valor: Math.max(0, this.coCtx.total - soma) }); this.coRender(); },
   coDel(i) { this.coPays.splice(i, 1); this.coRender(); },
@@ -1942,26 +1963,37 @@ const Modules = {
     const usadoVal = this.coCtx.usadoVal || 0;
     const soma = pays.reduce((s, p) => s + (+p.valor || 0), 0);
     const cash = pays.filter(p => p.method === 'Dinheiro').reduce((s, p) => s + (+p.valor || 0), 0);
-    // ----- Pré-venda / reserva: cria pedido único em vez de venda concluída -----
-    if (fchk('co-prevenda')) {
+    const temItemPrevenda = c.itens.some(i => i.prevenda);
+    // ----- Reserva da venda inteira (checkbox manual, só quando NÃO há item de pré-venda) -----
+    if (!temItemPrevenda && fchk('co-prevenda')) {
       const cliente = fval('co-pv-cliente');
-      if (!cliente) return Toast.err('Informe o nome do cliente para a pré-venda.');
+      if (!cliente) return Toast.err('Informe o nome do cliente para a reserva.');
       if ((soma - cash) > total + 0.01) return Toast.err('Pagamentos eletrônicos excedem o total. Ajuste os valores.');
       return this.pvFromCart(cliente, fval('co-pv-tel'), pays);
+    }
+    // ----- Venda mista (itens imediatos + itens de pré-venda) exige cliente -----
+    let preCliente = '', preTel = '', preData = '';
+    if (temItemPrevenda) {
+      preCliente = fval('co-pv-cliente'); preTel = fval('co-pv-tel'); preData = fval('co-pv-data');
+      if (!preCliente) return Toast.err('Informe o nome do cliente (a venda tem item em pré-venda).');
+      if (!preTel) return Toast.err('Informe o telefone/WhatsApp do cliente (a venda tem item em pré-venda).');
     }
     if (soma < total - 0.01) return Toast.err('Ainda falta ' + Fmt.brl(total - soma) + ' a pagar.');
     if ((soma - cash) > total + 0.01) return Toast.err('Pagamentos eletrônicos excedem o total. Ajuste os valores.');
     const pagamentos = pays.map(p => { const pg = this.coMethodToPag(p.method, +p.valor || 0); pg.taxa = (typeof Taxas !== 'undefined') ? Taxas.feeByKey(p.method, +p.valor || 0) : 0; return pg; });
     const taxaTotal = pagamentos.reduce((s, p) => s + p.taxa, 0);
     const lucro = totalVenda - custoTot, liquido = totalVenda - taxaTotal, lucroLiquido = liquido - custoTot;
-    c.itens.forEach(i => { const p = DB.get('produtos', i.produtoId); const novaQtd = p.qtd - i.qtd; DB.update('produtos', i.produtoId, { qtd: novaQtd, status: novaQtd <= 0 ? 'vendido' : p.status }); });
+    const agora = new Date().toISOString();
+    // baixa estoque SÓ dos itens de entrega imediata (itens de pré-venda não baixam até a entrega)
+    c.itens.forEach(i => { if (i.prevenda) return; const p = DB.get('produtos', i.produtoId); if (!p) return; const novaQtd = p.qtd - i.qtd; DB.update('produtos', i.produtoId, { qtd: novaQtd, status: novaQtd <= 0 ? 'vendido' : p.status }); });
     const troco = Math.max(0, soma - total);
     const operador = (typeof App !== 'undefined' && App.user() && App.user().nome) ? App.user().nome : 'Admin';
-    const itensArr = c.itens.map(i => { const pr = DB.get('produtos', i.produtoId) || {}; return { produtoId: i.produtoId, sku: i.sku, nome: i.nome, qtd: i.qtd, preco: i.preco, precoOriginal: i.precoOriginal != null ? i.precoOriginal : i.preco, precoMotivo: i.precoMotivo || null, custo: i.custo, categoria: pr.categoria || '—', condicao: pr.condicao || 'novo' }; });
+    const itensArr = c.itens.map(i => { const pr = DB.get('produtos', i.produtoId) || {}; return { produtoId: i.produtoId, sku: i.sku, nome: i.nome, qtd: i.qtd, preco: i.preco, precoOriginal: i.precoOriginal != null ? i.precoOriginal : i.preco, precoMotivo: i.precoMotivo || null, custo: i.custo, categoria: pr.categoria || '—', condicao: pr.condicao || 'novo', entrega: i.prevenda ? 'prevenda' : 'entregue', entregueEm: i.prevenda ? null : agora, dataPrevista: i.prevenda ? (preData || '') : null }; });
     const cupomSnap = (typeof Cupom !== 'undefined') ? Cupom.snapshot({ itens: itensArr }) : null;
     const usados = (c.usados || []).slice();
     const venda = DB.insert('vendas', {
-      data: new Date().toISOString(), itens: itensArr,
+      data: new Date().toISOString(), numero: (typeof PV !== 'undefined' ? PV.nextNum() : undefined), itens: itensArr,
+      cliente: preCliente || null, telefone: preTel || null, temPrevenda: temItemPrevenda,
       bruto, desconto: c.desconto, total: totalVenda, aPagar: total, custoTotal: custoTot, lucro, taxaTotal, liquido, lucroLiquido,
       pagamentos, recebido: soma, troco, usadoEntrada: usados.length ? usados.map(u => u.nome).join(', ') : null, usadoValor: usadoVal, usados: usados, usuario: operador, cupom: cupomSnap
     });
@@ -1990,7 +2022,8 @@ const Modules = {
     const netCash = Math.max(0, dinheiro - Math.max(0, soma - total));
     if (netCash > 0 && typeof Caixa !== 'undefined') Caixa.add({ fluxo: 'entrada', tipo: 'Venda em dinheiro', origem: 'Venda em dinheiro', categoria: 'Venda', valor: netCash, obs: c.itens.map(i => i.nome).join(', '), refId: venda.id });
     Modal.close();
-    Toast.ok('Venda concluída! ' + Fmt.brl(totalVenda) + (usadoVal ? ' · usados ' + Fmt.brl(usadoVal) : '') + (troco > 0 ? ' · Troco ' + Fmt.brl(troco) : ''));
+    const nPre = itensArr.filter(i => i.entrega === 'prevenda').length;
+    Toast.ok('Venda #' + (venda.numero || venda.id.slice(-4)) + ' concluída! ' + Fmt.brl(totalVenda) + (nPre ? ' · ' + nPre + ' item(ns) em pré-venda (entregar depois)' : '') + (usadoVal ? ' · usados ' + Fmt.brl(usadoVal) : '') + (troco > 0 ? ' · Troco ' + Fmt.brl(troco) : ''));
     this.clearCart(); this.pdvSearch();
     if (typeof Print !== 'undefined') Print.maybeAfterSale(venda);
   },
@@ -2809,7 +2842,13 @@ Modules.prevendas = function () {
     <input id="pv-fprod" placeholder="Filtrar por produto..." oninput="Modules.pvRender()">
     <input class="grow" id="pv-fbusca" placeholder="Buscar cliente, telefone ou nº do pedido..." oninput="Modules.pvRender()">
   </div>
-  <div id="pv-table" style="margin-top:8px"></div>`;
+  <div id="pv-vendaitens" style="margin-top:8px"></div>
+  <div id="pv-table" style="margin-top:18px"></div>`;
+};
+PV.vendaPendentes = function () {
+  const out = [];
+  DB.all('vendas').filter(v => !v.cancelada).forEach(v => (v.itens || []).forEach((it, idx) => { if (it.entrega === 'prevenda') out.push({ v, idx, it }); }));
+  return out.sort((a, b) => (b.v.numero || 0) - (a.v.numero || 0));
 };
 
 Modules.pvData = function () {
@@ -2862,7 +2901,26 @@ Modules.pvRender = function () {
     ac('Pagamento vencido', venc, 'red', '🚨') + ac('Vence hoje', hoje, 'amber', '⏰') +
     ac('Vence em até 3 dias', breve, 'blue', '📅') + ac('Pagas — prontas para retirada', retirar, 'green', '📦');
 
-  // ---- Tabela ----
+  // ---- Itens de venda (PDV) aguardando entrega — mesma venda, sem duplicar ----
+  const vpEl = document.getElementById('pv-vendaitens');
+  if (vpEl) {
+    const vp = PV.vendaPendentes();
+    vpEl.innerHTML = vp.length ? `<div class="section-title">📦 Itens de venda aguardando entrega <span class="muted" style="font-weight:500">${vp.length} item(ns) · mesmo nº da venda, pagamento já registrado</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Venda</th><th>Cliente</th><th>Produto</th><th class="num">Qtd</th><th class="num">Valor</th><th>Pagamento</th><th>Prevista</th><th>Entrega</th><th></th></tr></thead>
+      <tbody>${vp.map(({ v, idx, it }) => `<tr>
+        <td class="strong">#${v.numero || v.id.slice(-4)}</td>
+        <td>${esc(v.cliente || '—')}<div class="muted" style="font-size:11px">${esc(v.telefone || '')}</div></td>
+        <td>${esc(it.nome)}</td><td class="num">${it.qtd}</td><td class="num strong">${Fmt.brl(it.preco * it.qtd)}</td>
+        <td><span class="badge b-green">Pago</span></td>
+        <td>${it.dataPrevista ? Fmt.date(it.dataPrevista + 'T12:00:00') : '—'}</td>
+        <td><span class="badge b-amber">Aguardando</span></td>
+        <td class="num pv-actions">
+          <button class="btn-icon" title="Entregar item (baixa estoque)" onclick="Modules.pvEntregarItem('${v.id}',${idx})">📦</button>
+          ${v.telefone ? `<button class="btn-icon" title="WhatsApp" onclick="Modules.pvWhatsVenda('${v.id}')">💬</button>` : ''}
+          <button class="btn-icon" title="Ver venda completa" onclick="Modules.vdDetail('${v.id}')">🔎</button></td></tr>`).join('')}</tbody></table></div>` : '';
+  }
+
+  // ---- Tabela (reservas avulsas) ----
   const rows = this.pvData().map(p => {
     const rest = PV.restante(p), ativo = !p.entregue && !p.cancelado, es = PV.entStatus(p);
     return `<tr>
@@ -3025,6 +3083,33 @@ Modules.pvCancel = function (id) {
     DB.logMov('reserva', 'Pré-venda #' + pv.numero + ' cancelada — ' + pv.cliente + ' (estornos aplicados)', { valor: 0, refId: id });
     Toast.ok('Pedido #' + pv.numero + ' cancelado e estornado.'); Modal.close(); App.go('prevendas');
   }, 'Cancelar pedido');
+};
+
+/* ---------- Entregar UM item de pré-venda dentro de uma venda (sem duplicar) ---------- */
+Modules.pvEntregarItem = function (vendaId, idx) {
+  const v = DB.get('vendas', vendaId); if (!v || !v.itens || !v.itens[idx]) return;
+  const it = v.itens[idx];
+  if (it.entrega !== 'prevenda') return Toast.err('Este item já foi entregue.');
+  const prod = it.produtoId ? DB.get('produtos', it.produtoId) : null;
+  let aviso = '';
+  if (prod && prod.qtd < it.qtd) aviso = '<div class="muted" style="margin-top:8px">⚠️ Estoque atual (' + prod.qtd + ') menor que o pedido (' + it.qtd + '). Faça a Entrada de Estoque antes, ou o estoque ficará zerado.</div>';
+  Modal.confirm('Entregar <b>' + it.qtd + 'x ' + esc(it.nome) + '</b> da venda <b>#' + (v.numero || vendaId.slice(-4)) + '</b> para <b>' + esc(v.cliente || 'cliente') + '</b>?<br>Dá baixa no estoque desse item e marca como entregue. A venda e o financeiro não mudam.' + aviso, () => {
+    if (prod) { const nq = Math.max(0, (prod.qtd || 0) - it.qtd); DB.update('produtos', it.produtoId, { qtd: nq }); }
+    const itens = v.itens.slice();
+    itens[idx] = Object.assign({}, it, { entrega: 'entregue', entregueEm: new Date().toISOString() });
+    const aindaPendente = itens.some(x => x.entrega === 'prevenda');
+    DB.update('vendas', vendaId, { itens, temPrevenda: aindaPendente });
+    DB.logMov('venda', 'Item de pré-venda entregue: ' + it.qtd + 'x ' + it.nome + ' — venda #' + (v.numero || vendaId.slice(-4)) + ' · ' + (v.cliente || ''), { valor: it.preco * it.qtd, refId: vendaId });
+    Toast.ok('Item entregue e baixado do estoque! Venda #' + (v.numero || vendaId.slice(-4)) + '.'); Modal.close(); App.go('prevendas');
+  }, 'Entregar item');
+};
+Modules.pvWhatsVenda = function (vendaId) {
+  const v = DB.get('vendas', vendaId); if (!v) return;
+  const tel = (v.telefone || '').replace(/\D/g, ''); if (!tel) return Toast.err('Venda sem telefone.');
+  const num = tel.length <= 11 ? '55' + tel : tel;
+  const pend = (v.itens || []).filter(i => i.entrega === 'prevenda').map(i => i.nome).join(', ');
+  const msg = `Olá ${v.cliente || ''}! Sobre seu pedido *#${v.numero || vendaId.slice(-4)}* na Rico Games: o item *${pend}* já está disponível para retirada. 🎮`;
+  window.open('https://wa.me/' + num + '?text=' + encodeURIComponent(msg), '_blank');
 };
 
 /* ---------- Excluir definitivamente (para apagar testes) ---------- */
@@ -3285,7 +3370,7 @@ Modules.vdVendaCalc = function (v) {
     const taxaItem = base > 0 ? taxaTotal * (valor / base) : 0;
     return { nome: i.nome, qtd: i.qtd, precoUnit: i.preco, custoUnit, valor, custo,
       lucroBruto: valor - custo, taxaItem, lucroLiq: valor - custo - taxaItem, semCusto: !(custoUnit > 0),
-      precoOriginal: i.precoOriginal, precoMotivo: i.precoMotivo };
+      precoOriginal: i.precoOriginal, precoMotivo: i.precoMotivo, entrega: i.entrega, entregueEm: i.entregueEm };
   });
   const bruto = v.bruto != null ? v.bruto : base;
   const desconto = v.desconto || 0;
@@ -3392,26 +3477,30 @@ Modules.vdDetail = function (id) {
   const v = DB.get('vendas', id); if (!v) return;
   const fin = App.canFinance();
   const c = this.vdVendaCalc(v);
+  const stItem = e => e.entrega === 'prevenda' ? '<span class="badge b-amber">⏳ Pré-venda</span>' : (e.entrega === 'entregue' ? '<span class="badge b-green">✔ Entregue</span>' + (e.entregueEm ? '<div class="muted" style="font-size:10px">' + Fmt.date(e.entregueEm) + '</div>' : '') : '<span class="badge b-green">✔ Entregue</span>');
+  const temPre = c.itens.some(i => i.entrega === 'prevenda');
   const itensHtml = c.itens.map(i => `<tr>
       <td>${esc(i.nome)}${i.precoOriginal != null && i.precoUnit !== i.precoOriginal ? `<div class="muted" style="font-size:11px">preço alterado: <s>${Fmt.brl(i.precoOriginal)}</s> → ${Fmt.brl(i.precoUnit)}${i.precoMotivo ? ' · ' + esc(i.precoMotivo) : ''}</div>` : ''}</td>
+      <td>${stItem(i)}</td>
       <td class="num">${i.qtd}</td>
       <td class="num">${Fmt.brl(i.precoUnit)}</td>
       ${fin ? `<td class="num muted">${i.semCusto ? '<span title="Custo não cadastrado">⚠️</span> ' : ''}${Fmt.brl(i.custoUnit)}</td>` : ''}
       ${fin ? `<td class="num">${Fmt.brl(i.lucroBruto)}</td>` : ''}
       ${fin ? `<td class="num" style="color:${i.lucroLiq >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${Fmt.brl(i.lucroLiq)}</td>` : ''}
       <td class="num strong">${Fmt.brl(i.valor)}</td></tr>`).join('');
-  const colspan = fin ? 4 : 3;
   Modal.open({
-    title: '🧾 Venda #' + id.slice(-4) + (v.cancelada ? ' — CANCELADA' : ''),
+    title: '🧾 Venda #' + (v.numero || id.slice(-4)) + (v.cancelada ? ' — CANCELADA' : '') + (temPre ? ' · contém pré-venda' : ''),
     body: `
       <div class="card" style="background:var(--bg-2);margin-bottom:14px">
-        <div class="mini-stat"><span>Número da venda</span><b>#${id.slice(-4)}</b></div>
+        <div class="mini-stat"><span>Número da venda</span><b>#${v.numero || id.slice(-4)}</b></div>
+        ${v.cliente ? `<div class="mini-stat"><span>Cliente</span><b>${esc(v.cliente)}${v.telefone ? ' · ' + esc(v.telefone) : ''}</b></div>` : ''}
         <div class="mini-stat"><span>Data e horário</span><b>${Fmt.datetime(v.data)}</b></div>
         <div class="mini-stat"><span>Forma de pagamento</span><b>${v.pagamentos.map(p => p.tipo + (p.parcelas > 1 ? ' ' + p.parcelas + 'x' : '')).join(', ')}</b></div>
         ${(v.usados && v.usados.length) ? v.usados.map(u => `<div class="mini-stat"><span>🔄 Usado: ${esc(u.nome)}${u.estado ? ' (' + esc(u.estado) + ')' : ''}</span><b style="color:var(--green)">− ${Fmt.brl(u.valor)}</b></div>`).join('') + `<div class="mini-stat"><span class="strong">Total em usados</span><b style="color:var(--green)">− ${Fmt.brl(v.usadoValor || 0)}</b></div>` : (v.usadoEntrada ? `<div class="mini-stat"><span>Usado recebido na troca</span><b style="color:var(--green)">🔄 ${esc(v.usadoEntrada)}</b></div>` : '')}
       </div>
       <div class="section-title" style="margin:0 0 8px">Produtos vendidos</div>
-      <div class="table-wrap"><table><thead><tr><th>Produto</th><th class="num">Qtd</th><th class="num">Valor unit.</th>${fin ? '<th class="num">Custo unit.</th><th class="num">Lucro bruto</th><th class="num">Lucro líquido</th>' : ''}<th class="num">Total</th></tr></thead><tbody>${itensHtml}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Entrega</th><th class="num">Qtd</th><th class="num">Valor unit.</th>${fin ? '<th class="num">Custo unit.</th><th class="num">Lucro bruto</th><th class="num">Lucro líquido</th>' : ''}<th class="num">Total</th></tr></thead><tbody>${itensHtml}</tbody></table></div>
+      ${temPre ? `<div class="muted" style="font-size:12px;margin-top:6px">⏳ Itens em pré-venda são entregues depois pela aba <b>Pré-venda / Reservas</b> — mesma venda, sem duplicar.</div>` : ''}
       <div class="card" style="background:var(--bg-2);margin-top:14px">
         <div class="mini-stat"><span>Valor bruto</span><b>${Fmt.brl(c.bruto)}</b></div>
         ${c.desconto ? `<div class="mini-stat"><span>Desconto aplicado</span><b style="color:var(--red)">− ${Fmt.brl(c.desconto)}</b></div>` : ''}
@@ -5314,10 +5403,10 @@ Modules.biExport = function (fmt) {
 
 /* ============ ANÁLISE POR FORMA DE PAGAMENTO ============ */
 BI.payKey = function (tipo, parcelas) {
-  if (tipo === 'Crédito') return (!parcelas || parcelas <= 1) ? 'Crédito à vista' : 'Crédito parcelado';
+  if (tipo === 'Crédito') return (!parcelas || parcelas <= 1) ? 'Crédito à vista' : 'Crédito ' + parcelas + 'x';
   return tipo; // PIX, Dinheiro, Débito ou outra forma
 };
-BI.payOrder = ['PIX', 'Dinheiro', 'Débito', 'Crédito à vista', 'Crédito parcelado', 'Produto usado'];
+BI.payOrder = ['PIX', 'Dinheiro', 'Débito', 'Crédito à vista', 'Produto usado'];
 /* fração (0..1) do valor da venda que corresponde aos filtros de produto/categoria/condição */
 BI.payFrac = function (cat, prod, cond) {
   if (!cat && !prod && !cond) return null;
@@ -5335,39 +5424,54 @@ BI.payFrac = function (cat, prod, cond) {
     return matched / base;
   };
 };
+BI.vendaCusto = function (v) {
+  return (v.itens || []).reduce((s, i) => { const cu = (i.custo > 0) ? i.custo : ((BI.prodInfo(i.sku) || {}).custoMedio || (BI.prodInfo(i.sku) || {}).custo || 0); return s + cu * i.qtd; }, 0);
+};
 BI.payAgg = function (vendas, fracFn) {
-  const m = {}, ensure = k => (m[k] = m[k] || { key: k, nome: k, vendas: 0, valor: 0, taxa: 0 });
-  let totFat = 0, totVendas = 0;
+  const m = {}, ensure = k => (m[k] = m[k] || { key: k, nome: k, vendas: 0, valor: 0, taxa: 0, lucro: 0 });
+  let totFat = 0, totVendas = 0, totCusto = 0;
   vendas.forEach(v => {
     const frac = fracFn ? fracFn(v) : 1;
     if (frac <= 0) return;
     totVendas++;
+    const vTotal = (v.total || 0);
+    const custoV = BI.vendaCusto(v);
+    const lucroBrutoV = vTotal - custoV; // lucro antes das taxas
     const usadoVal = ((v.usadoValor != null ? v.usadoValor : (v.usados ? v.usados.reduce((s, u) => s + (u.valor || 0), 0) : 0)) || 0) * frac;
     const paysSum = (v.pagamentos || []).reduce((s, p) => s + (p.valor || 0), 0);
     const recebido = v.recebido != null ? v.recebido : paysSum;
-    const aPagar = v.aPagar != null ? v.aPagar : Math.max(0, (v.total || 0) - (usadoVal / (frac || 1)));
+    const aPagar = v.aPagar != null ? v.aPagar : Math.max(0, vTotal - (usadoVal / (frac || 1)));
     let trocoRest = v.troco != null ? v.troco : Math.max(0, recebido - aPagar); // troco abatido só do dinheiro
     const used = {};
+    const shareLucro = (val) => vTotal ? lucroBrutoV * (val / (vTotal * frac || 1)) : 0; // lucro proporcional ao valor da forma
     (v.pagamentos || []).forEach(p => {
       let val = p.valor || 0;
       if (p.tipo === 'Dinheiro' && trocoRest > 0) { const cut = Math.min(val, trocoRest); val -= cut; trocoRest -= cut; }
       val *= frac;
       if (val <= 0.009) return;
       const k = BI.payKey(p.tipo, p.parcelas); ensure(k);
-      m[k].valor += val;
-      m[k].taxa += (p.taxa != null ? p.taxa : (typeof Taxas !== 'undefined' ? Taxas.fee(p) : 0)) * frac;
+      const taxa = (p.taxa != null ? p.taxa : (typeof Taxas !== 'undefined' ? Taxas.fee(p) : 0)) * frac;
+      m[k].valor += val; m[k].taxa += taxa; m[k].lucro += shareLucro(val) - taxa;
       used[k] = 1;
     });
-    if (usadoVal > 0.009) { ensure('Produto usado'); m['Produto usado'].valor += usadoVal; used['Produto usado'] = 1; }
+    if (usadoVal > 0.009) { ensure('Produto usado'); m['Produto usado'].valor += usadoVal; m['Produto usado'].lucro += shareLucro(usadoVal); used['Produto usado'] = 1; }
     Object.keys(used).forEach(k => m[k].vendas++);
-    totFat += (v.total || 0) * frac;
+    totFat += vTotal * frac; totCusto += custoV * frac;
   });
   const list = Object.values(m).sort((a, b) => {
     const ia = BI.payOrder.indexOf(a.key), ib = BI.payOrder.indexOf(b.key);
     return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
   });
-  list.forEach(x => { x.liquido = x.valor - x.taxa; x.pctFat = totFat ? x.valor / totFat * 100 : 0; x.pctQtd = totVendas ? x.vendas / totVendas * 100 : 0; });
-  return { list, totFat, totVendas, totTaxa: list.reduce((s, x) => s + x.taxa, 0), totLiq: list.reduce((s, x) => s + x.liquido, 0) };
+  list.forEach(x => { x.liquido = x.valor - x.taxa; x.pctFat = totFat ? x.valor / totFat * 100 : 0; x.pctQtd = totVendas ? x.vendas / totVendas * 100 : 0; x.taxaMedia = x.valor ? x.taxa / x.valor * 100 : 0; x.ticket = x.vendas ? x.valor / x.vendas : 0; });
+  return { list, totFat, totVendas, totCusto, totTaxa: list.reduce((s, x) => s + x.taxa, 0), totLiq: list.reduce((s, x) => s + x.liquido, 0), totLucro: list.reduce((s, x) => s + x.lucro, 0) };
+};
+/* taxa de cartão de referência (para estimar economia de PIX/Dinheiro) */
+BI.refCardRate = function () {
+  if (typeof Taxas === 'undefined') return 0;
+  const cv = Taxas.get('Crédito à vista');
+  if (cv && cv.percent) return cv.percent;
+  const cards = Taxas.ativas().filter(t => /Crédito|Débito/.test(t.key));
+  return cards.length ? cards.reduce((s, t) => s + (t.percent || 0), 0) / cards.length : 0;
 };
 BI.prevRange = function (r, per) {
   if (per === 'mes') { const s = r.start; return { start: new Date(s.getFullYear(), s.getMonth() - 1, 1), end: new Date(s.getFullYear(), s.getMonth(), 0, 23, 59, 59, 999) }; }
@@ -5376,7 +5480,12 @@ BI.prevRange = function (r, per) {
   return { start, end };
 };
 
-function payColor(k) { return ({ 'PIX': '#22c55e', 'Dinheiro': '#0ea5e9', 'Débito': '#6366f1', 'Crédito à vista': '#f59e0b', 'Crédito parcelado': '#ef4444', 'Produto usado': '#a855f7' })[k] || '#94a3b8'; }
+function payColor(k) {
+  const map = { 'PIX': '#22c55e', 'Dinheiro': '#0ea5e9', 'Débito': '#6366f1', 'Crédito à vista': '#f59e0b', 'Produto usado': '#a855f7' };
+  if (map[k]) return map[k];
+  if (/^Crédito/.test(k)) return '#ef4444'; // parcelado (qualquer Nx)
+  return '#94a3b8';
+}
 function biDonut(slices, total, centerLabel) {
   const active = slices.filter(s => s.value > 0);
   if (!total || !active.length) return '<div class="muted" style="text-align:center;padding:40px 0">Sem dados no período.</div>';
@@ -5413,101 +5522,135 @@ Modules.biPagamentos = function () {
   <div id="bipag-res"></div>`;
 };
 Modules.biPagSetChart = function (c) { this.biPagState.chart = c; this.biPagRender(); };
-Modules.biPagRender = function () {
-  const host = document.getElementById('bipag-res'); if (!host) return;
+Modules.biPagCompute = function () {
   const per = fval('pag-per') || 'mes';
-  const cc = document.getElementById('pag-custom'); if (cc) cc.style.display = per === 'custom' ? 'inline-flex' : 'none';
   const fracFn = BI.payFrac(fval('pag-cat'), fval('pag-prod'), fval('pag-cond'));
   const r = BI.range(per, fval('pag-de'), fval('pag-ate'));
   const vendas = BI.vendas().filter(v => { const d = new Date(v.data); return d >= r.start && d <= r.end; });
   const cur = BI.payAgg(vendas, fracFn);
-  let prevMap = null, prevTot = 0, pr = null;
+  let prev = null, pr = null;
   if (per !== 'all') {
     pr = BI.prevRange(r, per);
     const pv = BI.vendas().filter(v => { const d = new Date(v.data); return d >= pr.start && d <= pr.end; });
-    const prev = BI.payAgg(pv, fracFn); prevMap = {}; prev.list.forEach(x => prevMap[x.key] = x.valor); prevTot = prev.totFat;
+    prev = BI.payAgg(pv, fracFn);
   }
-  host.innerHTML = Modules.biPagHtml(cur, prevMap, prevTot, per, r, pr);
+  return { cur, prev, per, r, pr };
 };
-Modules.biPagHtml = function (cur, prevMap, prevTot, per, r, pr) {
+Modules.biPagRender = function () {
+  const host = document.getElementById('bipag-res'); if (!host) return;
+  const per = fval('pag-per') || 'mes';
+  const cc = document.getElementById('pag-custom'); if (cc) cc.style.display = per === 'custom' ? 'inline-flex' : 'none';
+  const ctx = this.biPagCompute();
+  host.innerHTML = Modules.biPagHtml(ctx);
+};
+Modules.biPagHtml = function (ctx) {
+  const cur = ctx.cur, prev = ctx.prev, r = ctx.r;
   if (!cur.list.length) return '<div class="empty-state"><div class="big">💳</div>Nenhuma venda no período selecionado.</div>';
-  const mais = cur.list.slice().sort((a, b) => b.valor - a.valor)[0];
-  const usada = cur.list.slice().sort((a, b) => b.vendas - a.vendas)[0];
   const periodoLabel = Fmt.date(r.start) + (Fmt.date(r.start) !== Fmt.date(r.end) ? ' a ' + Fmt.date(r.end) : '');
+  const pctTaxasFat = cur.totFat ? cur.totTaxa / cur.totFat * 100 : 0;
+  const fatLiquido = cur.totFat - cur.totTaxa;
+  const get = k => cur.list.find(x => x.key === k) || { valor: 0, taxa: 0 };
+  const semTaxaFat = get('PIX').valor + get('Dinheiro').valor;
+  const refRate = BI.refCardRate();
+  const economia = semTaxaFat * refRate / 100;
+
+  /* ---------- KPIs executivos ---------- */
+  const kpis = `<div class="grid kpis" style="margin-bottom:16px">
+    ${kpi('Total de taxas pagas', Fmt.brl(cur.totTaxa), 'no período', '💳', 'red')}
+    <div class="card kpi"><div class="kpi-ico">📉</div><div class="kpi-label">Taxas sobre faturamento</div><div class="kpi-value">${Fmt.pct(pctTaxasFat)}</div><div class="kpi-sub">do faturamento bruto</div></div>
+    <div class="card kpi blue"><div class="kpi-ico">🏦</div><div class="kpi-label">Faturamento líquido</div><div class="kpi-value">${Fmt.brl(fatLiquido)}</div><div class="kpi-sub">bruto ${Fmt.brl(cur.totFat)} − taxas ${Fmt.brl(cur.totTaxa)}</div></div>
+    <div class="card kpi" style="border:1px solid var(--green)"><div class="kpi-ico">💚</div><div class="kpi-label">Economia c/ PIX e Dinheiro</div><div class="kpi-value" style="color:var(--green)">${Fmt.brl(economia)}</div><div class="kpi-sub">vs taxa de cartão (${Fmt.pct(refRate)})</div></div>
+  </div>`;
+
+  /* ---------- Comparação com período anterior ---------- */
+  let comp = '';
+  if (prev) {
+    const vari = (a, b) => { if (!b) return a ? '<span class="badge b-green">novo</span>' : '<span class="muted">—</span>'; const d = (a - b) / b * 100; return `<span style="color:${d >= 0 ? 'var(--red)' : 'var(--green)'};font-weight:700">${d >= 0 ? '▲ +' : '▼ '}${Fmt.pct(Math.abs(d))}</span>`; };
+    const variG = (a, b) => { if (!b) return a ? '<span class="badge b-green">novo</span>' : '<span class="muted">—</span>'; const d = (a - b) / b * 100; return `<span style="color:${d >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${d >= 0 ? '▲ +' : '▼ '}${Fmt.pct(Math.abs(d))}</span>`; };
+    const cmpCell = (lbl, a, b, vf) => `<div class="pag-cmp"><div class="muted" style="font-size:11px">${lbl}</div><div style="font-size:15px;font-weight:700">${Fmt.brl(a)}</div><div style="font-size:11px">ant: ${Fmt.brl(b)} · ${vf(a, b)}</div></div>`;
+    comp = `<div class="card" style="margin-bottom:16px"><div class="section-title">📊 Este período vs anterior</div>
+      <div class="pag-cmp-row">
+        ${cmpCell('Faturamento bruto', cur.totFat, prev.totFat, variG)}
+        ${cmpCell('Taxas pagas', cur.totTaxa, prev.totTaxa, vari)}
+        ${cmpCell('Faturamento líquido', cur.totFat - cur.totTaxa, prev.totFat - prev.totTaxa, variG)}
+        ${cmpCell('Lucro líquido', cur.totLucro, prev.totLucro, variG)}
+      </div></div>`;
+  }
+
+  /* ---------- Gráfico (4 modos) ---------- */
   const chart = this.biPagState.chart;
-  const slices = cur.list.map(x => ({ label: x.key, value: chart === 'fat' ? x.valor : x.vendas, color: payColor(x.key) }));
-  const center = chart === 'fat' ? Fmt.brl(cur.totFat).replace('R$ ', 'R$') : cur.totVendas + '';
-  const total = chart === 'fat' ? cur.totFat : cur.list.reduce((s, x) => s + x.vendas, 0);
-  const legend = cur.list.map(x => {
-    const val = chart === 'fat' ? Fmt.brl(x.valor) : x.vendas + ' venda(s)';
-    const pct = chart === 'fat' ? x.pctFat : (total ? x.vendas / total * 100 : 0);
+  const valOf = x => chart === 'fat' ? x.valor : chart === 'qtd' ? x.vendas : chart === 'taxas' ? x.taxa : x.liquido;
+  const fmtVal = v => chart === 'qtd' ? (v + ' venda(s)') : Fmt.brl(v);
+  const slices = cur.list.map(x => ({ label: x.key, value: valOf(x), color: payColor(x.key) }));
+  const total = cur.list.reduce((s, x) => s + valOf(x), 0);
+  const center = chart === 'fat' ? Fmt.brl(cur.totFat).replace('R$ ', 'R$') : chart === 'qtd' ? cur.totVendas + '' : chart === 'taxas' ? Fmt.brl(cur.totTaxa).replace('R$ ', 'R$') : Fmt.brl(cur.totFat - cur.totTaxa).replace('R$ ', 'R$');
+  const legend = cur.list.slice().sort((a, b) => valOf(b) - valOf(a)).map(x => {
+    const pct = total ? valOf(x) / total * 100 : 0;
     return `<div class="pag-leg"><span class="pag-dot" style="background:${payColor(x.key)}"></span>
-      <div style="flex:1"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(x.key)}</b><span class="strong">${val}</span></div>
+      <div style="flex:1"><div style="display:flex;justify-content:space-between;gap:8px"><b>${esc(x.key)}</b><span class="strong">${fmtVal(valOf(x))}</span></div>
       <div class="bi-bartrack" style="margin-top:5px"><div class="bi-barfill" style="width:${Math.min(100, pct)}%;background:${payColor(x.key)}"></div></div>
-      <div class="muted" style="font-size:11px;margin-top:3px">${Fmt.pct(pct)} ${chart === 'fat' ? 'do faturamento' : 'das vendas'}</div></div></div>`;
+      <div class="muted" style="font-size:11px;margin-top:3px">${Fmt.pct(pct)}</div></div></div>`;
   }).join('');
+  const segBtn = (k, l) => `<button class="seg-btn ${chart === k ? 'on' : ''}" onclick="Modules.biPagSetChart('${k}')">${l}</button>`;
+  const grafico = `<div class="card" style="margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px">
+      <div class="section-title" style="margin:0">Distribuição <span class="muted" style="font-weight:500">· ${esc(periodoLabel)}</span></div>
+      <div class="seg">${segBtn('fat', 'Faturamento')}${segBtn('qtd', 'Quantidade')}${segBtn('taxas', 'Taxas')}${segBtn('liquido', 'Líquido')}</div>
+    </div>
+    <div class="pag-chartwrap"><div class="pag-donut">${biDonut(slices, total, center)}</div><div class="pag-legend">${legend}</div></div>
+  </div>`;
 
-  const cmp = (key) => {
-    if (!prevMap) return '<span class="muted">—</span>';
-    const cu = (cur.list.find(x => x.key === key) || {}).valor || 0, pvv = prevMap[key] || 0;
-    if (!pvv && !cu) return '<span class="muted">—</span>';
-    if (!pvv) return '<span class="badge b-green">novo</span>';
-    const d = (cu - pvv) / pvv * 100;
-    const col = d >= 0 ? 'var(--green)' : 'var(--red)';
-    return `<span style="color:${col};font-weight:700">${d >= 0 ? '▲' : '▼'} ${Fmt.pct(Math.abs(d))}</span><div class="muted" style="font-size:10.5px">ant: ${Fmt.brl(pvv)}</div>`;
-  };
-
+  /* ---------- Tabela detalhada ---------- */
   const rows = cur.list.map(x => `<tr>
     <td><span class="pag-dot" style="background:${payColor(x.key)}"></span> <b>${esc(x.key)}</b></td>
     <td class="num">${x.vendas}</td>
-    <td class="num">${Fmt.pct(x.pctQtd)}</td>
     <td class="num strong">${Fmt.brl(x.valor)}</td>
     <td class="num">${Fmt.pct(x.pctFat)}</td>
+    <td class="num">${x.taxa > 0 ? Fmt.pct(x.taxaMedia) : '0%'}</td>
     <td class="num ${x.taxa > 0 ? '' : 'muted'}">${x.taxa > 0 ? '− ' + Fmt.brl(x.taxa) : '—'}</td>
     <td class="num strong" style="color:var(--green)">${Fmt.brl(x.liquido)}</td>
-    <td class="num">${cmp(x.key)}</td></tr>`).join('');
-
-  const totLiqGeral = cur.totFat - cur.totTaxa;
-  const deltaTot = (prevMap && prevTot) ? (cur.totFat - prevTot) / prevTot * 100 : null;
-
-  return `
-  <div class="grid kpis" style="margin-bottom:16px">
-    ${kpi('Mais fatura', mais ? mais.key : '—', mais ? Fmt.brl(mais.valor) + ' · ' + Fmt.pct(mais.pctFat) : '', '🏆', 'amber')}
-    ${kpi('Mais utilizada', usada ? usada.key : '—', usada ? usada.vendas + ' vendas · ' + Fmt.pct(usada.pctQtd) : '', '👥', 'blue')}
-    ${kpi('Total em taxas', Fmt.brl(cur.totTaxa), cur.totFat ? Fmt.pct(cur.totTaxa / cur.totFat * 100) + ' do faturamento' : '', '💳', 'red')}
-    ${kpi('Líquido recebido', Fmt.brl(totLiqGeral), 'após taxas de cartão', '🏦', 'purple')}
-  </div>
-  <div class="card" style="margin-bottom:16px">
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px">
-      <div class="section-title" style="margin:0">Distribuição das vendas <span class="muted" style="font-weight:500">· ${esc(periodoLabel)}</span></div>
-      <div class="seg">
-        <button class="seg-btn ${chart === 'fat' ? 'on' : ''}" onclick="Modules.biPagSetChart('fat')">Por faturamento</button>
-        <button class="seg-btn ${chart === 'qtd' ? 'on' : ''}" onclick="Modules.biPagSetChart('qtd')">Por quantidade</button>
-      </div>
-    </div>
-    <div class="pag-chartwrap"><div class="pag-donut">${biDonut(slices, total, center)}</div><div class="pag-legend">${legend}</div></div>
-  </div>
-  <div class="card">
-    <div class="section-title">Detalhamento por forma de pagamento${deltaTot != null ? ` <span class="muted" style="font-weight:500">· faturamento ${deltaTot >= 0 ? '▲' : '▼'} ${Fmt.pct(Math.abs(deltaTot))} vs período anterior</span>` : ''}</div>
+    <td class="num" style="color:${x.lucro >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${Fmt.brl(x.lucro)}</td>
+    <td class="num">${Fmt.brl(x.ticket)}</td></tr>`).join('');
+  const tabela = `<div class="card" style="margin-bottom:16px"><div class="section-title">Relatório por forma de pagamento</div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Forma de pagamento</th><th class="num">Vendas</th><th class="num">% qtd</th><th class="num">Faturado</th><th class="num">% fat.</th><th class="num">Taxas</th><th class="num">Líquido</th><th class="num">vs ant.</th></tr></thead>
+      <thead><tr><th>Forma</th><th class="num">Vendas</th><th class="num">Faturado</th><th class="num">Part.</th><th class="num">Taxa média</th><th class="num">Taxas pagas</th><th class="num">Líquido</th><th class="num">Lucro líq.</th><th class="num">Ticket</th></tr></thead>
       <tbody>${rows}</tbody>
-      <tfoot><tr style="font-weight:700;border-top:2px solid var(--line)"><td>TOTAL</td><td class="num">${cur.totVendas}</td><td class="num">100%</td><td class="num">${Fmt.brl(cur.totFat)}</td><td class="num">100%</td><td class="num">− ${Fmt.brl(cur.totTaxa)}</td><td class="num" style="color:var(--green)">${Fmt.brl(totLiqGeral)}</td><td></td></tr></tfoot>
+      <tfoot><tr style="font-weight:700;border-top:2px solid var(--line)"><td>TOTAL</td><td class="num">${cur.totVendas}</td><td class="num">${Fmt.brl(cur.totFat)}</td><td class="num">100%</td><td class="num">${Fmt.pct(pctTaxasFat)}</td><td class="num">− ${Fmt.brl(cur.totTaxa)}</td><td class="num" style="color:var(--green)">${Fmt.brl(fatLiquido)}</td><td class="num" style="color:var(--green)">${Fmt.brl(cur.totLucro)}</td><td></td></tr></tfoot>
     </table></div>
-    <p class="muted" style="font-size:11.5px;margin-top:8px">Vendas com pagamento dividido aparecem em cada forma usada, por isso a soma de "% qtd" pode passar de 100%. Os valores em reais são sempre distribuídos proporcionalmente e somam o faturamento total.</p>
-    ${App.canFinance() ? `<div style="margin-top:10px"><button class="btn-ghost btn-sm" onclick="Modules.biPagExport()">⬇️ Exportar Excel</button></div>` : ''}
-  </div>`;
+    <p class="muted" style="font-size:11.5px;margin-top:8px">Pagamentos divididos são rateados entre as formas; os valores somam o faturamento total. Lucro líquido = participação no lucro bruto − taxas da forma.</p>
+    ${App.canFinance() ? `<div style="margin-top:10px"><button class="btn-ghost btn-sm" onclick="Modules.biPagExport()">⬇️ Exportar Excel</button></div>` : ''}</div>`;
+
+  /* ---------- Ranking das taxas ---------- */
+  const rk = cur.list.filter(x => x.taxa > 0.009).sort((a, b) => b.taxa - a.taxa);
+  const ranking = `<div class="card"><div class="section-title">🏅 Ranking das taxas (maior custo)</div>
+    ${rk.length ? biRankRows(rk, x => x.taxa, x => x.vendas + ' vendas · ' + Fmt.brl(x.valor) + ' faturado · taxa ' + Fmt.pct(x.taxaMedia), x => `<span style="color:var(--red)">${Fmt.brl(x.taxa)}</span>`) : '<p class="muted">Nenhuma taxa paga no período (tudo em PIX/dinheiro). 🎉</p>'}</div>`;
+
+  /* ---------- Insights automáticos ---------- */
+  const cardFat = cur.list.filter(x => /Crédito|Débito/.test(x.key)).reduce((s, x) => s + x.valor, 0);
+  const pctCard = cur.totFat ? cardFat / cur.totFat * 100 : 0;
+  const parcTaxa = cur.list.filter(x => /^Crédito \d+x/.test(x.key)).reduce((s, x) => s + x.taxa, 0);
+  const pctParcTaxas = cur.totTaxa ? parcTaxa / cur.totTaxa * 100 : 0;
+  const maxImpacto = rk[0];
+  const ins = [];
+  if (pctCard > 0) ins.push(`${Fmt.pct(pctCard)} do faturamento foi realizado em cartão.`);
+  ins.push(`As taxas consumiram ${Fmt.pct(pctTaxasFat)} do faturamento bruto.`);
+  if (economia > 0) ins.push(`O PIX e o dinheiro economizaram aproximadamente ${Fmt.brl(economia)} em taxas no período.`);
+  if (pctParcTaxas > 0) ins.push(`O crédito parcelado representou ${Fmt.pct(pctParcTaxas)} das taxas pagas.`);
+  if (maxImpacto) ins.push(`A modalidade ${maxImpacto.key} teve o maior impacto financeiro: ${Fmt.brl(maxImpacto.taxa)} em taxas.`);
+  if (cur.totLucro > 0 && cur.totFat) ins.push(`A margem líquida média do período foi de ${Fmt.pct(cur.totLucro / cur.totFat * 100)} sobre o faturamento.`);
+  const insights = `<div class="card" style="margin-top:16px"><div class="section-title">💡 Insights</div>
+    <div style="display:flex;flex-direction:column;gap:8px">${ins.map(t => `<div class="pag-insight">💬 ${esc(t)}</div>`).join('')}</div></div>`;
+
+  return kpis + comp + grafico + `<div class="grid cols-2" style="margin-bottom:0">${tabela}${ranking}</div>` + insights;
 };
 Modules.biPagExport = function () {
-  const per = fval('pag-per') || 'mes';
-  const fracFn = BI.payFrac(fval('pag-cat'), fval('pag-prod'), fval('pag-cond'));
-  const r = BI.range(per, fval('pag-de'), fval('pag-ate'));
-  const vendas = BI.vendas().filter(v => { const d = new Date(v.data); return d >= r.start && d <= r.end; });
-  const cur = BI.payAgg(vendas, fracFn), r2 = x => Math.round(x * 100) / 100;
+  const ctx = Modules.biPagCompute(); const cur = ctx.cur, r = ctx.r, r2 = x => Math.round(x * 100) / 100;
+  const pctTaxasFat = cur.totFat ? cur.totTaxa / cur.totFat * 100 : 0;
   const aoa = [['Rico Games — Análise por forma de pagamento'], ['Período', Fmt.date(r.start) + ' a ' + Fmt.date(r.end)], [],
-    ['Forma', 'Vendas', '% qtd', 'Faturado', '% fat', 'Taxas', 'Líquido']];
-  cur.list.forEach(x => aoa.push([x.key, x.vendas, r2(x.pctQtd), r2(x.valor), r2(x.pctFat), r2(x.taxa), r2(x.liquido)]));
-  aoa.push(['TOTAL', cur.totVendas, 100, r2(cur.totFat), 100, r2(cur.totTaxa), r2(cur.totFat - cur.totTaxa)]);
+    ['Faturamento bruto', r2(cur.totFat)], ['Total de taxas', r2(cur.totTaxa)], ['% taxas s/ faturamento', r2(pctTaxasFat)], ['Faturamento líquido', r2(cur.totFat - cur.totTaxa)], ['Lucro líquido', r2(cur.totLucro)], [],
+    ['Forma', 'Vendas', 'Faturado', '% fat', 'Taxa média %', 'Taxas pagas', 'Líquido', 'Lucro líquido', 'Ticket médio']];
+  cur.list.forEach(x => aoa.push([x.key, x.vendas, r2(x.valor), r2(x.pctFat), r2(x.taxaMedia), r2(x.taxa), r2(x.liquido), r2(x.lucro), r2(x.ticket)]));
+  aoa.push(['TOTAL', cur.totVendas, r2(cur.totFat), 100, r2(pctTaxasFat), r2(cur.totTaxa), r2(cur.totFat - cur.totTaxa), r2(cur.totLucro), '']);
   Exporter.xlsx('formas-pagamento-' + new Date().toISOString().slice(0, 10) + '.xlsx', 'Pagamentos', aoa);
 };
 
