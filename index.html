@@ -496,7 +496,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 2.8.1 · pré-venda integrada</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 2.8.2 · lucro corrige custo</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -3201,9 +3201,10 @@ Modules.vdData = function () {
       if (cat && categoria !== cat) return;
       if (tipo && condicao !== tipo) return;
       if (q && !i.nome.toLowerCase().includes(q)) return;
-      const valor = i.preco * i.qtd, custo = i.custo * i.qtd;
+      const custoUnit = (i.custo > 0) ? i.custo : (prod ? (prod.custoMedio || prod.custo || 0) : 0); // usa custo médio atual se a venda gravou custo 0
+      const valor = i.preco * i.qtd, custo = custoUnit * i.qtd;
       const taxaItem = base > 0 ? taxaV * (valor / base) : 0;
-      const semCusto = !(i.custo > 0);
+      const semCusto = !(custoUnit > 0);
       items.push({ data: v.data, nome: i.nome, categoria, condicao, qtd: i.qtd, custo, precoUnit: i.preco, valor, lucro: valor - custo, taxaItem, lucroLiq: valor - custo - taxaItem, semCusto, pag: pagStr, vendaId: v.id });
     });
   });
@@ -3223,10 +3224,12 @@ Modules.vdVendaCalc = function (v) {
   const taxaTotal = v.taxaTotal != null ? v.taxaTotal : (typeof Taxas !== 'undefined' ? Taxas.feeVenda(v) : 0);
   const base = (v.itens || []).reduce((s, x) => s + x.preco * x.qtd, 0);
   const itens = (v.itens || []).map(i => {
-    const valor = i.preco * i.qtd, custo = (i.custo || 0) * i.qtd;
+    const prod = DB.get('produtos', i.produtoId);
+    const custoUnit = (i.custo > 0) ? i.custo : (prod ? (prod.custoMedio || prod.custo || 0) : 0); // fallback custo médio atual
+    const valor = i.preco * i.qtd, custo = custoUnit * i.qtd;
     const taxaItem = base > 0 ? taxaTotal * (valor / base) : 0;
-    return { nome: i.nome, qtd: i.qtd, precoUnit: i.preco, custoUnit: i.custo || 0, valor, custo,
-      lucroBruto: valor - custo, taxaItem, lucroLiq: valor - custo - taxaItem, semCusto: !(i.custo > 0),
+    return { nome: i.nome, qtd: i.qtd, precoUnit: i.preco, custoUnit, valor, custo,
+      lucroBruto: valor - custo, taxaItem, lucroLiq: valor - custo - taxaItem, semCusto: !(custoUnit > 0),
       precoOriginal: i.precoOriginal, precoMotivo: i.precoMotivo };
   });
   const bruto = v.bruto != null ? v.bruto : base;
@@ -4849,7 +4852,8 @@ const BI = {
     vendas.forEach(v => { const seen = {}; v.itens.forEach(i => {
       const k = i.sku, p = this.prodInfo(k);
       m[k] = m[k] || { sku: k, nome: i.nome, categoria: i.categoria || (p ? p.categoria : '—'), condicao: i.condicao || (p ? p.condicao : 'novo'), qtd: 0, receita: 0, custo: 0, lucro: 0, orders: 0 };
-      m[k].qtd += i.qtd; m[k].receita += i.preco * i.qtd; m[k].custo += i.custo * i.qtd; m[k].lucro += (i.preco - i.custo) * i.qtd;
+      const custoU = (i.custo > 0) ? i.custo : (p ? (p.custoMedio || p.custo || 0) : 0); // fallback p/ vendas registradas com custo 0
+      m[k].qtd += i.qtd; m[k].receita += i.preco * i.qtd; m[k].custo += custoU * i.qtd; m[k].lucro += (i.preco - custoU) * i.qtd;
       if (!seen[k]) { m[k].orders++; seen[k] = 1; }
     }); });
     return Object.values(m).map(x => { x.margemV = x.receita ? x.lucro / x.receita * 100 : 0; x.margemC = x.custo ? x.lucro / x.custo * 100 : 0; x.lucroUn = x.qtd ? x.lucro / x.qtd : 0; x.ticket = x.orders ? x.receita / x.orders : x.receita; return x; });
