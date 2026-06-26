@@ -430,6 +430,10 @@ td .muted,.muted{color:var(--txt-3)}
 .pag-cmp{background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
 .pag-insight{background:var(--bg-2);border:1px solid var(--line);border-left:3px solid var(--accent,#5b8cff);border-radius:8px;padding:9px 12px;font-size:13px;line-height:1.4}
 
+/* ===== Toggle pré-venda no item do carrinho ===== */
+.ci-pre{display:inline-block;margin-top:3px;font-size:10.5px;font-weight:700;cursor:pointer;border:1px solid var(--line);border-radius:20px;padding:2px 9px;color:var(--txt-3);background:var(--bg-2)}
+.ci-pre.on{color:#fff;background:#a855f7;border-color:#a855f7}
+
 </style>
   <script>
     /* Aplica o tema o quanto antes para evitar "flash" ao carregar */
@@ -501,7 +505,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 3.1 · dashboard de taxas</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 3.2 · pré-venda por item</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -1673,6 +1677,7 @@ const Modules = {
     else this.cart.itens.push({ produtoId: id, sku: p.sku, nome: p.nome, preco: p.preco, precoOriginal: p.preco, custo: p.custoMedio || p.custo, qtd: 1, max: isPre ? 99999 : disp, prevenda: isPre });
     this.renderCart();
   },
+  cartTogglePrevenda(id) { const it = this.cart.itens.find(i => i.produtoId === id); if (!it) return; it.prevenda = !it.prevenda; this.renderCart(); },
   cartQty(id, d) {
     const it = this.cart.itens.find(i => i.produtoId === id); if (!it) return;
     it.qtd += d; if (it.qtd <= 0) this.cart.itens = this.cart.itens.filter(i => i.produtoId !== id);
@@ -1693,7 +1698,8 @@ const Modules = {
         ${c.itens.length ? c.itens.map(i => `
           <div class="cart-item">
             <span class="ci-thumb">${this.catIcon(i)}</span>
-            <div class="ci-name">${esc(i.nome)}${i.prevenda ? ' <span class="badge b-purple" style="font-size:9px">Pré-venda</span>' : ''}<small>${i.precoOriginal != null && i.preco !== i.precoOriginal ? `<s style="color:var(--txt-3)">${Fmt.brl(i.precoOriginal)}</s> ` : ''}${App.can('podeAlterarPreco') ? `<a style="color:var(--green);cursor:pointer" onclick="Modules.precoEdit('${i.produtoId}')">${Fmt.brl(i.preco)} ✎</a>` : Fmt.brl(i.preco)} un.${i.precoMotivo ? ' · ' + esc(i.precoMotivo) : ''}</small></div>
+            <div class="ci-name">${esc(i.nome)}<small>${i.precoOriginal != null && i.preco !== i.precoOriginal ? `<s style="color:var(--txt-3)">${Fmt.brl(i.precoOriginal)}</s> ` : ''}${App.can('podeAlterarPreco') ? `<a style="color:var(--green);cursor:pointer" onclick="Modules.precoEdit('${i.produtoId}')">${Fmt.brl(i.preco)} ✎</a>` : Fmt.brl(i.preco)} un.${i.precoMotivo ? ' · ' + esc(i.precoMotivo) : ''}</small>
+              <a class="ci-pre ${i.prevenda ? 'on' : ''}" onclick="Modules.cartTogglePrevenda('${i.produtoId}')" title="Marcar/desmarcar este item como pré-venda">${i.prevenda ? '📋 Pré-venda' : '⚡ Entrega imediata'}</a></div>
             <div class="qty"><button onclick="Modules.cartQty('${i.produtoId}',-1)">−</button><b>${i.qtd}</b><button onclick="Modules.cartQty('${i.produtoId}',1)">+</button></div>
             <div class="strong" style="width:74px;text-align:right">${Fmt.brl(i.preco * i.qtd)}</div>
             <span class="ci-rm" title="Remover" onclick="Modules.cartRemove('${i.produtoId}')">✕</span>
@@ -1909,17 +1915,9 @@ const Modules = {
         <div class="field full"><label>Data prevista de chegada/entrega (opcional)</label><input id="co-pv-data" type="date"></div></div>
         <input type="hidden" id="co-prevenda" value="auto"></div>`;
     }
-    // Venda comum: opção de tratar tudo como reserva (cliente paga/retira depois)
-    return `<div class="card" style="margin-top:14px;background:var(--bg-2)">
-        <label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-weight:600"><input type="checkbox" id="co-prevenda" onchange="Modules.coTogglePrevenda()"> 📋 Tratar como reserva (cliente vai pagar/retirar depois)</label>
-        <div id="co-pvfields" style="display:none;margin-top:10px">
-          <div class="form-grid"><div class="field"><label>Nome do cliente *</label><input id="co-pv-cliente"></div>
-          <div class="field"><label>Telefone / WhatsApp</label><input id="co-pv-tel" placeholder="11 99999-9999"></div></div>
-          <div class="muted" style="font-size:11.5px;margin-top:6px">Cria um pedido de reserva com nº próprio. O que estiver pago entra no financeiro; o estoque é reservado e só baixa na entrega.</div>
-        </div>
-      </div>`;
+    // Venda comum (sem itens de pré-venda) — nada a coletar. Dica de como marcar pré-venda por item.
+    return `<div class="muted" style="margin-top:12px;font-size:11.5px">Dica: para vender um produto que ainda vai chegar, marque <b>📋 Pré-venda</b> no item dentro do carrinho antes de finalizar.</div>`;
   },
-  coTogglePrevenda() { const on = fchk('co-prevenda'); const el = document.getElementById('co-pvfields'); if (el) el.style.display = on ? 'block' : 'none'; const btn = document.getElementById('co-confirm'); if (btn) btn.textContent = on ? '📋 Registrar reserva' : '✅ Confirmar venda'; },
   coMethods() { return (typeof Taxas !== 'undefined') ? Taxas.ativas().map(t => t.key) : ['PIX', 'Dinheiro', 'Débito', 'Crédito à vista']; },
   coAddLine() { const soma = this.coPays.reduce((s, p) => s + (+p.valor || 0), 0); this.coPays.push({ method: 'Dinheiro', valor: Math.max(0, this.coCtx.total - soma) }); this.coRender(); },
   coDel(i) { this.coPays.splice(i, 1); this.coRender(); },
@@ -1964,13 +1962,6 @@ const Modules = {
     const soma = pays.reduce((s, p) => s + (+p.valor || 0), 0);
     const cash = pays.filter(p => p.method === 'Dinheiro').reduce((s, p) => s + (+p.valor || 0), 0);
     const temItemPrevenda = c.itens.some(i => i.prevenda);
-    // ----- Reserva da venda inteira (checkbox manual, só quando NÃO há item de pré-venda) -----
-    if (!temItemPrevenda && fchk('co-prevenda')) {
-      const cliente = fval('co-pv-cliente');
-      if (!cliente) return Toast.err('Informe o nome do cliente para a reserva.');
-      if ((soma - cash) > total + 0.01) return Toast.err('Pagamentos eletrônicos excedem o total. Ajuste os valores.');
-      return this.pvFromCart(cliente, fval('co-pv-tel'), pays);
-    }
     // ----- Venda mista (itens imediatos + itens de pré-venda) exige cliente -----
     let preCliente = '', preTel = '', preData = '';
     if (temItemPrevenda) {
@@ -1984,11 +1975,19 @@ const Modules = {
     const taxaTotal = pagamentos.reduce((s, p) => s + p.taxa, 0);
     const lucro = totalVenda - custoTot, liquido = totalVenda - taxaTotal, lucroLiquido = liquido - custoTot;
     const agora = new Date().toISOString();
-    // baixa estoque SÓ dos itens de entrega imediata (itens de pré-venda não baixam até a entrega)
-    c.itens.forEach(i => { if (i.prevenda) return; const p = DB.get('produtos', i.produtoId); if (!p) return; const novaQtd = p.qtd - i.qtd; DB.update('produtos', i.produtoId, { qtd: novaQtd, status: novaQtd <= 0 ? 'vendido' : p.status }); });
+    // baixa estoque SÓ dos itens imediatos. Itens de pré-venda: se já houver estoque, reserva a unidade (não baixa); senão, fica aguardando chegada.
+    c.itens.forEach(i => {
+      const p = DB.get('produtos', i.produtoId); if (!p) return;
+      if (i.prevenda) {
+        const disp = (p.qtd || 0) - (p.reservado || 0);
+        if (disp >= i.qtd) { DB.update('produtos', i.produtoId, { reservado: (p.reservado || 0) + i.qtd }); i.__res = true; }
+        return;
+      }
+      const novaQtd = p.qtd - i.qtd; DB.update('produtos', i.produtoId, { qtd: novaQtd, status: novaQtd <= 0 ? 'vendido' : p.status });
+    });
     const troco = Math.max(0, soma - total);
     const operador = (typeof App !== 'undefined' && App.user() && App.user().nome) ? App.user().nome : 'Admin';
-    const itensArr = c.itens.map(i => { const pr = DB.get('produtos', i.produtoId) || {}; return { produtoId: i.produtoId, sku: i.sku, nome: i.nome, qtd: i.qtd, preco: i.preco, precoOriginal: i.precoOriginal != null ? i.precoOriginal : i.preco, precoMotivo: i.precoMotivo || null, custo: i.custo, categoria: pr.categoria || '—', condicao: pr.condicao || 'novo', entrega: i.prevenda ? 'prevenda' : 'entregue', entregueEm: i.prevenda ? null : agora, dataPrevista: i.prevenda ? (preData || '') : null }; });
+    const itensArr = c.itens.map(i => { const pr = DB.get('produtos', i.produtoId) || {}; return { produtoId: i.produtoId, sku: i.sku, nome: i.nome, qtd: i.qtd, preco: i.preco, precoOriginal: i.precoOriginal != null ? i.precoOriginal : i.preco, precoMotivo: i.precoMotivo || null, custo: i.custo, categoria: pr.categoria || '—', condicao: pr.condicao || 'novo', entrega: i.prevenda ? 'prevenda' : 'entregue', entregueEm: i.prevenda ? null : agora, dataPrevista: i.prevenda ? (preData || '') : null, reservado: i.prevenda ? !!i.__res : false }; });
     const cupomSnap = (typeof Cupom !== 'undefined') ? Cupom.snapshot({ itens: itensArr }) : null;
     const usados = (c.usados || []).slice();
     const venda = DB.insert('vendas', {
@@ -3094,7 +3093,7 @@ Modules.pvEntregarItem = function (vendaId, idx) {
   let aviso = '';
   if (prod && prod.qtd < it.qtd) aviso = '<div class="muted" style="margin-top:8px">⚠️ Estoque atual (' + prod.qtd + ') menor que o pedido (' + it.qtd + '). Faça a Entrada de Estoque antes, ou o estoque ficará zerado.</div>';
   Modal.confirm('Entregar <b>' + it.qtd + 'x ' + esc(it.nome) + '</b> da venda <b>#' + (v.numero || vendaId.slice(-4)) + '</b> para <b>' + esc(v.cliente || 'cliente') + '</b>?<br>Dá baixa no estoque desse item e marca como entregue. A venda e o financeiro não mudam.' + aviso, () => {
-    if (prod) { const nq = Math.max(0, (prod.qtd || 0) - it.qtd); DB.update('produtos', it.produtoId, { qtd: nq }); }
+    if (prod) { const nq = Math.max(0, (prod.qtd || 0) - it.qtd); const patch = { qtd: nq }; if (it.reservado) patch.reservado = Math.max(0, (prod.reservado || 0) - it.qtd); DB.update('produtos', it.produtoId, patch); }
     const itens = v.itens.slice();
     itens[idx] = Object.assign({}, it, { entrega: 'entregue', entregueEm: new Date().toISOString() });
     const aindaPendente = itens.some(x => x.entrega === 'prevenda');
@@ -3102,6 +3101,33 @@ Modules.pvEntregarItem = function (vendaId, idx) {
     DB.logMov('venda', 'Item de pré-venda entregue: ' + it.qtd + 'x ' + it.nome + ' — venda #' + (v.numero || vendaId.slice(-4)) + ' · ' + (v.cliente || ''), { valor: it.preco * it.qtd, refId: vendaId });
     Toast.ok('Item entregue e baixado do estoque! Venda #' + (v.numero || vendaId.slice(-4)) + '.'); Modal.close(); App.go('prevendas');
   }, 'Entregar item');
+};
+/* ---------- Pós-venda: marcar um item ENTREGUE de volta como pré-venda ---------- */
+Modules.pvMarcarItemPrevenda = function (vendaId, idx) {
+  if (typeof App !== 'undefined' && !App.isAdmin()) return Toast.err('Apenas o administrador pode alterar o status do item.');
+  const v = DB.get('vendas', vendaId); if (!v || !v.itens || !v.itens[idx]) return;
+  const it = v.itens[idx];
+  if (it.entrega === 'prevenda') return Toast.err('Este item já está em pré-venda.');
+  Modal.open({
+    title: '📋 Marcar item como pré-venda',
+    body: `<p class="muted">Item: <b>${esc(it.nome)}</b> · venda #${v.numero || vendaId.slice(-4)}</p>
+      <p class="muted" style="font-size:12px">O estoque baixado deste item será devolvido e ele passará a <b>aguardar entrega</b>. A venda e o financeiro não mudam.</p>
+      <div class="form-grid"><div class="field"><label>Cliente *</label><input id="pmi-cli" value="${esc(v.cliente || '')}"></div>
+      <div class="field"><label>Telefone / WhatsApp</label><input id="pmi-tel" value="${esc(v.telefone || '')}"></div>
+      <div class="field"><label>Data prevista de entrega</label><input id="pmi-data" type="date" value="${it.dataPrevista || ''}"></div></div>`,
+    foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.pvMarcarItemPrevendaSave('${vendaId}',${idx})">Confirmar</button>`
+  });
+};
+Modules.pvMarcarItemPrevendaSave = function (vendaId, idx) {
+  const v = DB.get('vendas', vendaId); if (!v || !v.itens[idx]) return;
+  const it = v.itens[idx];
+  const cli = fval('pmi-cli'); if (!cli) return Toast.err('Informe o nome do cliente.');
+  if (it.produtoId && it.entrega === 'entregue') { const p = DB.get('produtos', it.produtoId); if (p) DB.update('produtos', it.produtoId, { qtd: (p.qtd || 0) + it.qtd, status: 'disponivel' }); } // devolve estoque
+  const itens = v.itens.slice();
+  itens[idx] = Object.assign({}, it, { entrega: 'prevenda', entregueEm: null, reservado: false, dataPrevista: fval('pmi-data') || '' });
+  DB.update('vendas', vendaId, { itens, temPrevenda: true, cliente: cli, telefone: fval('pmi-tel') || v.telefone || '' });
+  DB.logMov('venda', 'Item marcado como pré-venda: ' + it.nome + ' — venda #' + (v.numero || vendaId.slice(-4)), { valor: 0, refId: vendaId });
+  Toast.ok('Item movido para pré-venda.'); Modal.close(); App.go('vendasDia');
 };
 Modules.pvWhatsVenda = function (vendaId) {
   const v = DB.get('vendas', vendaId); if (!v) return;
@@ -3368,9 +3394,9 @@ Modules.vdVendaCalc = function (v) {
     const custoUnit = (i.custo > 0) ? i.custo : (prod ? (prod.custoMedio || prod.custo || 0) : 0); // fallback custo médio atual
     const valor = i.preco * i.qtd, custo = custoUnit * i.qtd;
     const taxaItem = base > 0 ? taxaTotal * (valor / base) : 0;
-    return { nome: i.nome, qtd: i.qtd, precoUnit: i.preco, custoUnit, valor, custo,
+    return { nome: i.nome, qtd: i.qtd, precoUnit: i.preco, custoUnit, valor, custo, produtoId: i.produtoId,
       lucroBruto: valor - custo, taxaItem, lucroLiq: valor - custo - taxaItem, semCusto: !(custoUnit > 0),
-      precoOriginal: i.precoOriginal, precoMotivo: i.precoMotivo, entrega: i.entrega, entregueEm: i.entregueEm };
+      precoOriginal: i.precoOriginal, precoMotivo: i.precoMotivo, entrega: i.entrega, entregueEm: i.entregueEm, reservado: i.reservado };
   });
   const bruto = v.bruto != null ? v.bruto : base;
   const desconto = v.desconto || 0;
@@ -3477,9 +3503,13 @@ Modules.vdDetail = function (id) {
   const v = DB.get('vendas', id); if (!v) return;
   const fin = App.canFinance();
   const c = this.vdVendaCalc(v);
-  const stItem = e => e.entrega === 'prevenda' ? '<span class="badge b-amber">⏳ Pré-venda</span>' : (e.entrega === 'entregue' ? '<span class="badge b-green">✔ Entregue</span>' + (e.entregueEm ? '<div class="muted" style="font-size:10px">' + Fmt.date(e.entregueEm) + '</div>' : '') : '<span class="badge b-green">✔ Entregue</span>');
+  const stItem = e => e.entrega === 'prevenda' ? (e.reservado ? '<span class="badge b-blue">🔒 Reservado</span>' : '<span class="badge b-amber">⏳ Pré-venda</span>') : '<span class="badge b-green">✔ Entregue</span>' + (e.entregueEm ? '<div class="muted" style="font-size:10px">' + Fmt.date(e.entregueEm) + '</div>' : '');
   const temPre = c.itens.some(i => i.entrega === 'prevenda');
-  const itensHtml = c.itens.map(i => `<tr>
+  const adm = (typeof App !== 'undefined' && App.isAdmin && App.isAdmin());
+  const itAcao = (i, idx) => i.entrega === 'prevenda'
+    ? `<button class="btn-icon" title="Entregar item (baixa estoque)" onclick="Modal.close();Modules.pvEntregarItem('${id}',${idx})">📦</button>`
+    : `<button class="btn-icon" title="Marcar como pré-venda" onclick="Modal.close();Modules.pvMarcarItemPrevenda('${id}',${idx})">📋</button>`;
+  const itensHtml = c.itens.map((i, idx) => `<tr>
       <td>${esc(i.nome)}${i.precoOriginal != null && i.precoUnit !== i.precoOriginal ? `<div class="muted" style="font-size:11px">preço alterado: <s>${Fmt.brl(i.precoOriginal)}</s> → ${Fmt.brl(i.precoUnit)}${i.precoMotivo ? ' · ' + esc(i.precoMotivo) : ''}</div>` : ''}</td>
       <td>${stItem(i)}</td>
       <td class="num">${i.qtd}</td>
@@ -3487,7 +3517,8 @@ Modules.vdDetail = function (id) {
       ${fin ? `<td class="num muted">${i.semCusto ? '<span title="Custo não cadastrado">⚠️</span> ' : ''}${Fmt.brl(i.custoUnit)}</td>` : ''}
       ${fin ? `<td class="num">${Fmt.brl(i.lucroBruto)}</td>` : ''}
       ${fin ? `<td class="num" style="color:${i.lucroLiq >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${Fmt.brl(i.lucroLiq)}</td>` : ''}
-      <td class="num strong">${Fmt.brl(i.valor)}</td></tr>`).join('');
+      <td class="num strong">${Fmt.brl(i.valor)}</td>
+      ${adm && !v.cancelada ? `<td class="num">${itAcao(i, idx)}</td>` : ''}</tr>`).join('');
   Modal.open({
     title: '🧾 Venda #' + (v.numero || id.slice(-4)) + (v.cancelada ? ' — CANCELADA' : '') + (temPre ? ' · contém pré-venda' : ''),
     body: `
@@ -3499,7 +3530,7 @@ Modules.vdDetail = function (id) {
         ${(v.usados && v.usados.length) ? v.usados.map(u => `<div class="mini-stat"><span>🔄 Usado: ${esc(u.nome)}${u.estado ? ' (' + esc(u.estado) + ')' : ''}</span><b style="color:var(--green)">− ${Fmt.brl(u.valor)}</b></div>`).join('') + `<div class="mini-stat"><span class="strong">Total em usados</span><b style="color:var(--green)">− ${Fmt.brl(v.usadoValor || 0)}</b></div>` : (v.usadoEntrada ? `<div class="mini-stat"><span>Usado recebido na troca</span><b style="color:var(--green)">🔄 ${esc(v.usadoEntrada)}</b></div>` : '')}
       </div>
       <div class="section-title" style="margin:0 0 8px">Produtos vendidos</div>
-      <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Entrega</th><th class="num">Qtd</th><th class="num">Valor unit.</th>${fin ? '<th class="num">Custo unit.</th><th class="num">Lucro bruto</th><th class="num">Lucro líquido</th>' : ''}<th class="num">Total</th></tr></thead><tbody>${itensHtml}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Entrega</th><th class="num">Qtd</th><th class="num">Valor unit.</th>${fin ? '<th class="num">Custo unit.</th><th class="num">Lucro bruto</th><th class="num">Lucro líquido</th>' : ''}<th class="num">Total</th>${adm && !v.cancelada ? '<th></th>' : ''}</tr></thead><tbody>${itensHtml}</tbody></table></div>
       ${temPre ? `<div class="muted" style="font-size:12px;margin-top:6px">⏳ Itens em pré-venda são entregues depois pela aba <b>Pré-venda / Reservas</b> — mesma venda, sem duplicar.</div>` : ''}
       <div class="card" style="background:var(--bg-2);margin-top:14px">
         <div class="mini-stat"><span>Valor bruto</span><b>${Fmt.brl(c.bruto)}</b></div>
