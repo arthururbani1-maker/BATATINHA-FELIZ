@@ -496,7 +496,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 2.9.1 · excluir lançamentos</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 2.9.2 · excluir pré-vendas</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -2794,7 +2794,7 @@ Modules.prevendas = function () {
   setTimeout(() => Modules.pvRender(), 20);
   return `
   <div class="page-head"><div><h1>Pré-venda / Reservas</h1><p>Pedidos reservados: quem pagou, quem falta pagar e quem já pode retirar</p></div>
-    <div class="actions"><button class="btn-primary" onclick="Modules.pvForm()">+ Nova reserva</button></div></div>
+    <div class="actions">${(typeof App === 'undefined' || App.isAdmin()) ? '<button class="btn-ghost" onclick="Modules.pvLimparTestes()">🧹 Limpar canceladas</button>' : ''}<button class="btn-primary" onclick="Modules.pvForm()">+ Nova reserva</button></div></div>
   <div class="grid kpis" id="pv-kpis" style="margin-bottom:16px"></div>
   <div id="pv-alertas" style="margin-bottom:16px"></div>
   <div class="toolbar" style="flex-wrap:wrap;gap:8px">
@@ -2880,7 +2880,8 @@ Modules.pvRender = function () {
         ${ativo && rest <= 0.009 ? `<button class="btn-icon" title="Entregar (baixa no estoque)" onclick="Modules.pvEntregar('${p.id}')">📦</button>` : ''}
         ${p.telefone ? `<button class="btn-icon" title="WhatsApp" onclick="Modules.pvWhats('${p.id}')">💬</button>` : ''}
         ${ativo ? `<button class="btn-icon" title="Editar" onclick="Modules.pvForm('${p.id}')">✏️</button>` : ''}
-        ${ativo ? `<button class="btn-icon" title="Cancelar" onclick="Modules.pvCancel('${p.id}')">🗑️</button>` : ''}
+        ${ativo ? `<button class="btn-icon" title="Cancelar (mantém no histórico)" onclick="Modules.pvCancel('${p.id}')">🚫</button>` : ''}
+        ${(typeof App === 'undefined' || App.isAdmin()) ? `<button class="btn-icon" title="Excluir definitivamente" onclick="Modules.pvExcluir('${p.id}')">🗑️</button>` : ''}
         <button class="btn-icon" title="Detalhes" onclick="Modules.pvDetail('${p.id}')">🔎</button>
       </td></tr>`;
   }).join('');
@@ -3024,6 +3025,31 @@ Modules.pvCancel = function (id) {
     DB.logMov('reserva', 'Pré-venda #' + pv.numero + ' cancelada — ' + pv.cliente + ' (estornos aplicados)', { valor: 0, refId: id });
     Toast.ok('Pedido #' + pv.numero + ' cancelado e estornado.'); Modal.close(); App.go('prevendas');
   }, 'Cancelar pedido');
+};
+
+/* ---------- Excluir definitivamente (para apagar testes) ---------- */
+Modules.pvExcluir = function (id) {
+  if (typeof App !== 'undefined' && !App.isAdmin()) return Toast.err('Apenas o administrador pode excluir pré-vendas.');
+  const pv = DB.get('prevendas', id); if (!pv) return;
+  Modal.confirm('Excluir definitivamente o pedido <b>#' + pv.numero + '</b> (' + esc(pv.produtoNome) + ' — ' + esc(pv.cliente) + ')?<br>Reverte os pagamentos do financeiro/caixa e libera a reserva de estoque. <b>Não pode ser desfeito.</b>', () => {
+    (pv.pagamentos || []).forEach(p => { if (p.finId) DB.remove('financeiro', p.finId); if (p.caixaId) DB.remove('caixa', p.caixaId); });
+    if (!pv.entregue && !pv.cancelado) PV.release(pv); // libera reserva (se ainda ativa)
+    DB.remove('prevendas', id);
+    DB.logMov('reserva', 'Pré-venda #' + pv.numero + ' excluída — ' + pv.cliente, { valor: 0 });
+    Toast.ok('Pré-venda #' + pv.numero + ' excluída.'); Modal.close(); App.go('prevendas');
+  }, 'Excluir definitivamente');
+};
+Modules.pvLimparTestes = function () {
+  if (typeof App !== 'undefined' && !App.isAdmin()) return Toast.err('Apenas o administrador pode limpar.');
+  const canc = DB.all('prevendas').filter(p => p.cancelado);
+  if (!canc.length) return Toast.ok('Não há pré-vendas canceladas para remover. Use o 🗑️ na linha para excluir pedidos específicos.');
+  Modal.confirm('Remover definitivamente <b>' + canc.length + '</b> pré-venda(s) já cancelada(s)? Não pode ser desfeito.', () => {
+    canc.forEach(pv => {
+      (pv.pagamentos || []).forEach(p => { if (p.finId) DB.remove('financeiro', p.finId); if (p.caixaId) DB.remove('caixa', p.caixaId); });
+      DB.remove('prevendas', pv.id);
+    });
+    Toast.ok(canc.length + ' pré-venda(s) cancelada(s) removida(s).'); Modal.close(); App.go('prevendas');
+  }, 'Remover canceladas');
 };
 
 /* ---------- Entregar → baixa definitiva (SEM criar venda duplicada) ---------- */
