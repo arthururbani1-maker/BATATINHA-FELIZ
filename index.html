@@ -434,6 +434,20 @@ td .muted,.muted{color:var(--txt-3)}
 .ci-pre{display:inline-block;margin-top:3px;font-size:10.5px;font-weight:700;cursor:pointer;border:1px solid var(--line);border-radius:20px;padding:2px 9px;color:var(--txt-3);background:var(--bg-2)}
 .ci-pre.on{color:#fff;background:#a855f7;border-color:#a855f7}
 
+/* ===== Detalhamento financeiro da venda ===== */
+.vd-sum{background:var(--bg-2);border:1px solid var(--line);border-radius:11px;overflow:hidden}
+.vd-sum-row{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;font-size:14px}
+.vd-sum-row span{color:var(--txt-2)} .vd-sum-row b{font-size:15px}
+.vd-sum-final{background:var(--bg);border-top:2px solid var(--line)}
+.vd-sum-final span{color:var(--txt);font-weight:700} .vd-sum-final b{font-size:18px}
+.vd-calc{background:var(--bg-2);border:1px solid var(--line);border-radius:11px;padding:6px 4px}
+.vd-calc-line{display:grid;grid-template-columns:1fr 1.2fr 1.4fr;gap:8px;padding:8px 12px;font-size:12.5px;align-items:center}
+.vd-calc-line span:first-child{font-weight:700} .vd-calc-line span{color:var(--txt-2)}
+.vd-calc-conta{margin:6px 12px 8px;padding:10px 12px;background:var(--bg);border-radius:8px;text-align:center;font-size:15px;font-weight:600;font-family:'Courier New',monospace}
+.vd-result{display:flex;justify-content:space-between;align-items:center;gap:12px;background:linear-gradient(135deg,#16a34a,#22c55e);color:#fff;border-radius:12px;padding:16px 20px}
+.vd-result-val{font-size:26px;font-weight:800}
+@media (max-width:640px){ .vd-calc-line{grid-template-columns:1fr;gap:2px} .vd-result-val{font-size:22px} }
+
 </style>
   <script>
     /* Aplica o tema o quanto antes para evitar "flash" ao carregar */
@@ -505,7 +519,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 3.2 · pré-venda por item</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 3.3 · detalhamento do lucro</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -3418,21 +3432,28 @@ Modules.vdRender = function () {
     const vendas = d.vendas.filter(v => !q || (v.itens || []).some(i => i.nome.toLowerCase().includes(q)));
     const vrows = vendas.map(v => {
       const c = this.vdVendaCalc(v);
+      const custoTot = c.itens.reduce((s, i) => s + i.custo, 0);
+      const lucroBrutoTot = c.itens.reduce((s, i) => s + i.lucroBruto, 0);
       const pagStr = v.pagamentos.map(p => p.tipo + (p.parcelas > 1 ? ' ' + p.parcelas + 'x' : '')).join(', ');
+      const prodNomes = (v.itens || []).map(i => i.qtd + 'x ' + i.nome).join(', ');
+      const temPre = (v.itens || []).some(i => i.entrega === 'prevenda');
       return `<tr style="cursor:pointer" onclick="Modules.vdDetail('${v.id}')">
-        <td class="strong">#${v.id.slice(-4)}</td>
+        <td class="strong">#${v.numero || v.id.slice(-4)}</td>
         <td>${Fmt.time(v.data)}<div class="muted" style="font-size:11px">${Fmt.date(v.data)}</div></td>
-        <td class="num">${c.qtdItens}</td>
+        <td><div style="max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(prodNomes)}">${esc(prodNomes)}</div>${v.cliente ? `<div class="muted" style="font-size:11px">👤 ${esc(v.cliente)}</div>` : ''}</td>
         <td class="num strong">${Fmt.brl(v.total)}</td>
-        <td><span class="badge b-gray">${esc(pagStr)}</span></td>
+        ${canFin ? `<td class="num muted">${Fmt.brl(custoTot)}</td>` : ''}
+        ${canFin ? `<td class="num">${Fmt.brl(lucroBrutoTot)}</td>` : ''}
+        ${canFin ? `<td class="num" style="color:var(--red)">${c.taxaTotal > 0 ? '− ' + Fmt.brl(c.taxaTotal) : '—'}</td>` : ''}
         ${canFin ? `<td class="num strong" style="color:${c.lucroTotal >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(c.lucroTotal)}</td>` : ''}
-        <td>${v.cancelada ? '<span class="badge b-red">Cancelada</span>' : '<span class="badge b-green">Concluída</span>'}</td>
+        <td><span class="badge b-gray">${esc(pagStr)}</span></td>
+        <td>${v.cancelada ? '<span class="badge b-red">Cancelada</span>' : (temPre ? '<span class="badge b-amber">Pré-venda</span>' : '<span class="badge b-green">Concluída</span>')}</td>
       </tr>`;
     }).join('');
     document.getElementById('vd-vcount').innerHTML = `Vendas <span class="muted" style="font-weight:500">${vendas.length} venda(s) no período</span>`;
     ve.innerHTML = `<div class="table-wrap"><table>
-      <thead><tr><th>Nº</th><th>Horário</th><th class="num">Itens</th><th class="num">Total</th><th>Pagamento</th>${canFin ? '<th class="num">Lucro total</th>' : ''}<th>Status</th></tr></thead>
-      <tbody>${vrows || '<tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Nenhuma venda no período.</td></tr>'}</tbody></table></div>`;
+      <thead><tr><th>Nº</th><th>Horário</th><th>Produtos vendidos</th><th class="num">Total</th>${canFin ? '<th class="num">Custo</th><th class="num">Lucro bruto</th><th class="num">Taxas</th><th class="num">Lucro líquido</th>' : ''}<th>Pagamento</th><th>Status</th></tr></thead>
+      <tbody>${vrows || `<tr><td colspan="${canFin ? 10 : 6}" class="muted" style="text-align:center;padding:24px">Nenhuma venda no período.</td></tr>`}</tbody></table></div>`;
   }
   document.getElementById('vd-kpis').innerHTML =
     kpi('Faturamento bruto', Fmt.brl(d.fat), null, '💵', '') +
@@ -3503,43 +3524,87 @@ Modules.vdDetail = function (id) {
   const v = DB.get('vendas', id); if (!v) return;
   const fin = App.canFinance();
   const c = this.vdVendaCalc(v);
-  const stItem = e => e.entrega === 'prevenda' ? (e.reservado ? '<span class="badge b-blue">🔒 Reservado</span>' : '<span class="badge b-amber">⏳ Pré-venda</span>') : '<span class="badge b-green">✔ Entregue</span>' + (e.entregueEm ? '<div class="muted" style="font-size:10px">' + Fmt.date(e.entregueEm) + '</div>' : '');
-  const temPre = c.itens.some(i => i.entrega === 'prevenda');
+  const num = v.numero || id.slice(-4);
   const adm = (typeof App !== 'undefined' && App.isAdmin && App.isAdmin());
+  // ----- somas que reconciliam com as linhas por produto -----
+  const vendaBruta = c.itens.reduce((s, i) => s + i.valor, 0);
+  const custoTot = c.itens.reduce((s, i) => s + i.custo, 0);
+  const lucroBrutoTot = vendaBruta - custoTot;
+  const taxaTot = c.itens.reduce((s, i) => s + i.taxaItem, 0);
+  const lucroLiqTot = lucroBrutoTot - taxaTot;
+  const margem = vendaBruta ? lucroLiqTot / vendaBruta * 100 : 0;
+  const temPre = c.itens.some(i => i.entrega === 'prevenda');
+  const stItem = e => e.entrega === 'prevenda' ? (e.reservado ? '<span class="badge b-blue">🔒 Reservado</span>' : '<span class="badge b-amber">⏳ Pré-venda</span>') : '<span class="badge b-green">✔ Entregue</span>';
   const itAcao = (i, idx) => i.entrega === 'prevenda'
     ? `<button class="btn-icon" title="Entregar item (baixa estoque)" onclick="Modal.close();Modules.pvEntregarItem('${id}',${idx})">📦</button>`
     : `<button class="btn-icon" title="Marcar como pré-venda" onclick="Modal.close();Modules.pvMarcarItemPrevenda('${id}',${idx})">📋</button>`;
-  const itensHtml = c.itens.map((i, idx) => `<tr>
-      <td>${esc(i.nome)}${i.precoOriginal != null && i.precoUnit !== i.precoOriginal ? `<div class="muted" style="font-size:11px">preço alterado: <s>${Fmt.brl(i.precoOriginal)}</s> → ${Fmt.brl(i.precoUnit)}${i.precoMotivo ? ' · ' + esc(i.precoMotivo) : ''}</div>` : ''}</td>
+
+  /* ---------- Bloco 1: Resumo da venda ---------- */
+  const resumo = `<div class="vd-sum">
+    <div class="vd-sum-row"><span>Venda bruta</span><b>${Fmt.brl(vendaBruta)}</b></div>
+    ${fin ? `<div class="vd-sum-row"><span>(−) Custo dos produtos</span><b style="color:var(--red)">− ${Fmt.brl(custoTot)}</b></div>` : ''}
+    ${fin ? `<div class="vd-sum-row" style="border-top:1px dashed var(--line)"><span>(=) Lucro bruto</span><b>${Fmt.brl(lucroBrutoTot)}</b></div>` : ''}
+    ${fin ? `<div class="vd-sum-row"><span>(−) Taxas de pagamento</span><b style="color:var(--red)">− ${Fmt.brl(taxaTot)}</b></div>` : ''}
+    ${fin ? `<div class="vd-sum-row vd-sum-final"><span>(=) Lucro líquido</span><b style="color:${lucroLiqTot >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(lucroLiqTot)}</b></div>` : ''}
+  </div>`;
+
+  /* ---------- Bloco 2: Produtos vendidos (com rateio de taxa) ---------- */
+  const itensHtml = c.itens.map((i, idx) => {
+    const part = vendaBruta ? i.valor / vendaBruta * 100 : 0;
+    return `<tr>
+      <td>${esc(i.nome)} <span class="muted" style="font-size:11px">(${i.qtd} un · ${Fmt.pct(part)} da venda)</span></td>
       <td>${stItem(i)}</td>
-      <td class="num">${i.qtd}</td>
-      <td class="num">${Fmt.brl(i.precoUnit)}</td>
-      ${fin ? `<td class="num muted">${i.semCusto ? '<span title="Custo não cadastrado">⚠️</span> ' : ''}${Fmt.brl(i.custoUnit)}</td>` : ''}
-      ${fin ? `<td class="num">${Fmt.brl(i.lucroBruto)}</td>` : ''}
-      ${fin ? `<td class="num" style="color:${i.lucroLiq >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${Fmt.brl(i.lucroLiq)}</td>` : ''}
       <td class="num strong">${Fmt.brl(i.valor)}</td>
-      ${adm && !v.cancelada ? `<td class="num">${itAcao(i, idx)}</td>` : ''}</tr>`).join('');
+      ${fin ? `<td class="num muted">${i.semCusto ? '<span title="Custo não cadastrado">⚠️</span> ' : ''}${Fmt.brl(i.custo)}</td>` : ''}
+      ${fin ? `<td class="num">${Fmt.brl(i.lucroBruto)}</td>` : ''}
+      ${fin ? `<td class="num" style="color:var(--red)">${i.taxaItem > 0 ? '− ' + Fmt.brl(i.taxaItem) : '—'}</td>` : ''}
+      ${fin ? `<td class="num" style="color:${i.lucroLiq >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${Fmt.brl(i.lucroLiq)}</td>` : ''}
+      ${adm && !v.cancelada ? `<td class="num">${itAcao(i, idx)}</td>` : ''}</tr>`;
+  }).join('');
+  const produtos = `<div class="section-title" style="margin:0 0 8px">2. Produtos vendidos${fin && c.itens.length > 1 ? ' <span class="muted" style="font-weight:500">· taxa rateada proporcional ao valor de cada produto</span>' : ''}</div>
+    <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Entrega</th><th class="num">Valor</th>${fin ? '<th class="num">Custo</th><th class="num">Lucro bruto</th><th class="num">Taxa prop.</th><th class="num">Lucro líq.</th>' : ''}${adm && !v.cancelada ? '<th></th>' : ''}</tr></thead><tbody>${itensHtml}</tbody></table></div>
+    ${temPre ? `<div class="muted" style="font-size:12px;margin-top:6px">⏳ Itens em pré-venda são entregues depois pela aba <b>Pré-venda / Reservas</b> — mesma venda, sem duplicar.</div>` : ''}`;
+
+  /* ---------- Bloco 3+4: Formas de pagamento e taxas ---------- */
+  const pags = (v.pagamentos || []);
+  const pagRows = pags.map(p => {
+    const taxa = p.taxa != null ? p.taxa : (typeof Taxas !== 'undefined' ? Taxas.fee(p) : 0);
+    const pct = p.valor ? taxa / p.valor * 100 : 0;
+    const nome = p.tipo + (p.parcelas > 1 ? ' ' + p.parcelas + 'x' : '');
+    return `<tr><td><b>${esc(nome)}</b></td><td class="num">${Fmt.brl(p.valor)}</td>${fin ? `<td class="num">${Fmt.pct(pct)}</td><td class="num" style="color:var(--red)">${taxa > 0 ? '− ' + Fmt.brl(taxa) : 'R$ 0,00'}</td>` : ''}</tr>`;
+  }).join('');
+  const formas = `<div class="section-title" style="margin:0 0 8px">3. Formas de pagamento${fin ? ' e taxas aplicadas' : ''}</div>
+    <div class="table-wrap"><table><thead><tr><th>Forma</th><th class="num">Valor</th>${fin ? '<th class="num">Taxa %</th><th class="num">Taxa descontada</th>' : ''}</tr></thead><tbody>${pagRows}</tbody>
+    ${fin ? `<tfoot><tr style="font-weight:700;border-top:2px solid var(--line)"><td>Total de taxas</td><td></td><td></td><td class="num" style="color:var(--red)">− ${Fmt.brl(taxaTot)}</td></tr></tfoot>` : ''}</table></div>
+    ${(v.usados && v.usados.length) ? `<div class="muted" style="font-size:12px;margin-top:6px">🔄 ${v.usados.length} usado(s) recebido(s) como pagamento (não-financeiro): − ${Fmt.brl(v.usadoValor || 0)}</div>` : ''}`;
+
+  /* ---------- Bloco 5: Cálculo do lucro líquido (admin) ---------- */
+  const calculo = fin ? `<div class="section-title" style="margin:0 0 8px">5. Como o lucro líquido foi calculado</div>
+    <div class="vd-calc">
+      <div class="vd-calc-line"><span>Lucro bruto</span><span>= Venda bruta − Custo</span><span>= ${Fmt.brl(vendaBruta)} − ${Fmt.brl(custoTot)} = <b>${Fmt.brl(lucroBrutoTot)}</b></span></div>
+      <div class="vd-calc-line"><span>Lucro líquido</span><span>= Lucro bruto − Taxas</span><span>= ${Fmt.brl(lucroBrutoTot)} − ${Fmt.brl(taxaTot)} = <b style="color:${lucroLiqTot >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(lucroLiqTot)}</b></span></div>
+      <div class="vd-calc-conta">${Fmt.brl(vendaBruta)} − ${Fmt.brl(custoTot)} − ${Fmt.brl(taxaTot)} = <b style="color:${lucroLiqTot >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(lucroLiqTot)}</b></div>
+    </div>` : '';
+
+  /* ---------- Bloco 6: Resultado final ---------- */
+  const resultado = fin ? `<div class="vd-result"><div><div style="font-size:12px;opacity:.85">Lucro líquido da operação</div><div style="font-size:13px;opacity:.85">Margem ${Fmt.pct(margem)}</div></div><div class="vd-result-val">${Fmt.brl(lucroLiqTot)}</div></div>` : '';
+
   Modal.open({
-    title: '🧾 Venda #' + (v.numero || id.slice(-4)) + (v.cancelada ? ' — CANCELADA' : '') + (temPre ? ' · contém pré-venda' : ''),
+    title: '📊 Detalhamento Financeiro da Venda #' + num + (v.cancelada ? ' — CANCELADA' : ''),
+    wide: true,
     body: `
-      <div class="card" style="background:var(--bg-2);margin-bottom:14px">
-        <div class="mini-stat"><span>Número da venda</span><b>#${v.numero || id.slice(-4)}</b></div>
+      <div class="section-title" style="margin:0 0 8px">1. Resumo da venda</div>
+      <div class="card" style="background:var(--bg-2);margin-bottom:6px">
+        <div class="mini-stat"><span>Número da venda</span><b>#${num}</b></div>
         ${v.cliente ? `<div class="mini-stat"><span>Cliente</span><b>${esc(v.cliente)}${v.telefone ? ' · ' + esc(v.telefone) : ''}</b></div>` : ''}
         <div class="mini-stat"><span>Data e horário</span><b>${Fmt.datetime(v.data)}</b></div>
-        <div class="mini-stat"><span>Forma de pagamento</span><b>${v.pagamentos.map(p => p.tipo + (p.parcelas > 1 ? ' ' + p.parcelas + 'x' : '')).join(', ')}</b></div>
-        ${(v.usados && v.usados.length) ? v.usados.map(u => `<div class="mini-stat"><span>🔄 Usado: ${esc(u.nome)}${u.estado ? ' (' + esc(u.estado) + ')' : ''}</span><b style="color:var(--green)">− ${Fmt.brl(u.valor)}</b></div>`).join('') + `<div class="mini-stat"><span class="strong">Total em usados</span><b style="color:var(--green)">− ${Fmt.brl(v.usadoValor || 0)}</b></div>` : (v.usadoEntrada ? `<div class="mini-stat"><span>Usado recebido na troca</span><b style="color:var(--green)">🔄 ${esc(v.usadoEntrada)}</b></div>` : '')}
+        <div class="mini-stat"><span>Pagamento</span><b>${pags.map(p => p.tipo + (p.parcelas > 1 ? ' ' + p.parcelas + 'x' : '')).join(', ')}</b></div>
       </div>
-      <div class="section-title" style="margin:0 0 8px">Produtos vendidos</div>
-      <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Entrega</th><th class="num">Qtd</th><th class="num">Valor unit.</th>${fin ? '<th class="num">Custo unit.</th><th class="num">Lucro bruto</th><th class="num">Lucro líquido</th>' : ''}<th class="num">Total</th>${adm && !v.cancelada ? '<th></th>' : ''}</tr></thead><tbody>${itensHtml}</tbody></table></div>
-      ${temPre ? `<div class="muted" style="font-size:12px;margin-top:6px">⏳ Itens em pré-venda são entregues depois pela aba <b>Pré-venda / Reservas</b> — mesma venda, sem duplicar.</div>` : ''}
-      <div class="card" style="background:var(--bg-2);margin-top:14px">
-        <div class="mini-stat"><span>Valor bruto</span><b>${Fmt.brl(c.bruto)}</b></div>
-        ${c.desconto ? `<div class="mini-stat"><span>Desconto aplicado</span><b style="color:var(--red)">− ${Fmt.brl(c.desconto)}</b></div>` : ''}
-        ${fin ? `<div class="mini-stat"><span>Taxas (cartão)</span><b style="color:var(--red)">− ${Fmt.brl(c.taxaTotal)}</b></div>` : ''}
-        <div class="mini-stat" style="font-size:16px"><span class="strong">Total da venda</span><b style="color:var(--green)">${Fmt.brl(v.total)}</b></div>
-        ${fin ? `<div class="mini-stat"><span>Valor líquido (após taxas)</span><b>${Fmt.brl(c.liquido)}</b></div>` : ''}
-        ${fin ? `<div class="mini-stat" style="font-size:15px"><span class="strong">Lucro total da operação</span><b style="color:${c.lucroTotal >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(c.lucroTotal)}</b></div>` : ''}
-      </div>`,
+      ${resumo}
+      <div style="margin-top:16px">${produtos}</div>
+      <div style="margin-top:16px">${formas}</div>
+      ${calculo ? `<div style="margin-top:16px">${calculo}</div>` : ''}
+      ${resultado ? `<div style="margin-top:16px">${resultado}</div>` : ''}`,
     foot: v.cancelada
       ? `<span class="badge b-red" style="margin-right:auto">Venda cancelada em ${Fmt.date(v.canceladaEm || v.data)}</span>${typeof Print !== 'undefined' ? `<button class="btn-ghost" onclick="Print.print(DB.get('vendas','${id}'))">🖨️ Reimprimir</button>` : ''}<button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
       : `${App.can('podeCancelar') ? `<button class="btn-danger" style="margin-right:auto" onclick="Modules.vdCancel('${id}')">✕ Cancelar venda</button>` : ''}${App.isAdmin() ? `<button class="btn-ghost" onclick="Modules.vdGarantia('${id}')">🛡️ Garantia</button>` : ''}${typeof Print !== 'undefined' ? `<button class="btn-ghost" onclick="Print.print(DB.get('vendas','${id}'))">🖨️ Reimprimir cupom</button>` : ''}<button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
