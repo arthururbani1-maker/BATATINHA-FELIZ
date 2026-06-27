@@ -519,7 +519,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 3.3 · detalhamento do lucro</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 3.4 · boleto / financeira</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -1985,7 +1985,13 @@ const Modules = {
     }
     if (soma < total - 0.01) return Toast.err('Ainda falta ' + Fmt.brl(total - soma) + ' a pagar.');
     if ((soma - cash) > total + 0.01) return Toast.err('Pagamentos eletrônicos excedem o total. Ajuste os valores.');
-    const pagamentos = pays.map(p => { const pg = this.coMethodToPag(p.method, +p.valor || 0); pg.taxa = (typeof Taxas !== 'undefined') ? Taxas.feeByKey(p.method, +p.valor || 0) : 0; return pg; });
+    const pagamentos = pays.map(p => {
+      const pg = this.coMethodToPag(p.method, +p.valor || 0);
+      pg.taxa = (typeof Taxas !== 'undefined') ? Taxas.feeByKey(p.method, +p.valor || 0) : 0;
+      const tx = (typeof Taxas !== 'undefined') ? Taxas.get(p.method) : null;
+      if (tx && tx.tipo === 'financeira') { pg.financeira = true; pg.financeiraNome = tx.nome; pg.prazoDias = tx.prazoDias || 0; pg.conta = tx.conta || ''; }
+      return pg;
+    });
     const taxaTotal = pagamentos.reduce((s, p) => s + p.taxa, 0);
     const lucro = totalVenda - custoTot, liquido = totalVenda - taxaTotal, lucroLiquido = liquido - custoTot;
     const agora = new Date().toISOString();
@@ -2028,8 +2034,18 @@ const Modules = {
     });
     const formaStr = pagamentos.map(p => p.tipo + (p.parcelas > 1 ? ' ' + p.parcelas + 'x' : '')).join(' + ');
     DB.logMov('venda', 'Venda: ' + c.itens.map(i => i.qtd + 'x ' + i.nome).join(', ') + (usados.length ? ' (troca c/ ' + usados.length + ' usado(s))' : ''), { valor: totalVenda, refId: venda.id });
-    // financeiro registra só o valor financeiro recebido (exclui a parte paga com usado, que é não-financeira)
-    DB.logFin({ tipo: 'entrada', categoria: 'Venda', descricao: 'Venda PDV #' + venda.id.slice(-4) + ' (' + formaStr + (usados.length ? ' + usado (não-financeiro)' : '') + ')', valor: total, taxa: taxaTotal, liquido: total - taxaTotal, status: 'pago', origem: 'venda', refId: venda.id });
+    // ---- Financeiro: separa o recebido AGORA (pago) do que será recebido DEPOIS via financeira (a receber) ----
+    const finPays = pagamentos.filter(p => p.financeira);
+    const finSum = finPays.reduce((s, p) => s + p.valor, 0);
+    const finTaxa = finPays.reduce((s, p) => s + (p.taxa || 0), 0);
+    const imediato = total - finSum;                          // parte recebida na hora (PIX/dinheiro/cartão)
+    const taxaImediata = taxaTotal - finTaxa;
+    if (imediato > 0.009) DB.logFin({ tipo: 'entrada', categoria: 'Venda', descricao: 'Venda PDV #' + (venda.numero || venda.id.slice(-4)) + ' (' + formaStr + (usados.length ? ' + usado (não-financeiro)' : '') + ')', valor: imediato, taxa: taxaImediata, liquido: imediato - taxaImediata, status: 'pago', origem: 'venda', refId: venda.id });
+    finPays.forEach(p => {
+      const venc = new Date(Date.now() + (p.prazoDias || 0) * 86400000).toISOString();
+      DB.logFin({ tipo: 'entrada', categoria: 'Venda — Financeira', subcategoria: p.financeiraNome, descricao: 'Venda #' + (venda.numero || venda.id.slice(-4)) + ' — ' + p.financeiraNome + (venda.cliente ? ' · ' + venda.cliente : ''), valor: p.valor, taxa: p.taxa || 0, liquido: p.valor - (p.taxa || 0), status: 'areceber', pago: 0, emissao: new Date().toISOString(), vencimento: venc, data: venc, origem: 'venda', refId: venda.id, financeira: true, financeiraNome: p.financeiraNome, conta: p.conta || '', formaPagamento: p.financeiraNome });
+    });
+    if (finSum > 0) DB.logMov('venda', 'Venda #' + (venda.numero || venda.id.slice(-4)) + ' via financeira (' + finPays.map(p => p.financeiraNome).join(', ') + ') — a receber ' + Fmt.brl(finSum - finTaxa), { valor: finSum, refId: venda.id });
     // dinheiro líquido (descontado troco) entra no Caixa
     const dinheiro = pagamentos.filter(p => p.tipo === 'Dinheiro').reduce((s, p) => s + p.valor, 0);
     const netCash = Math.max(0, dinheiro - Math.max(0, soma - total));
@@ -3571,7 +3587,8 @@ Modules.vdDetail = function (id) {
     const taxa = p.taxa != null ? p.taxa : (typeof Taxas !== 'undefined' ? Taxas.fee(p) : 0);
     const pct = p.valor ? taxa / p.valor * 100 : 0;
     const nome = p.tipo + (p.parcelas > 1 ? ' ' + p.parcelas + 'x' : '');
-    return `<tr><td><b>${esc(nome)}</b></td><td class="num">${Fmt.brl(p.valor)}</td>${fin ? `<td class="num">${Fmt.pct(pct)}</td><td class="num" style="color:var(--red)">${taxa > 0 ? '− ' + Fmt.brl(taxa) : 'R$ 0,00'}</td>` : ''}</tr>`;
+    const finNota = p.financeira ? `<div class="muted" style="font-size:11px">🏦 a receber em ${p.prazoDias || 0} dia(s)${fin ? ' · líquido ' + Fmt.brl(p.valor - taxa) : ''}</div>` : '';
+    return `<tr><td><b>${esc(nome)}</b>${finNota}</td><td class="num">${Fmt.brl(p.valor)}</td>${fin ? `<td class="num">${Fmt.pct(pct)}</td><td class="num" style="color:var(--red)">${taxa > 0 ? '− ' + Fmt.brl(taxa) : 'R$ 0,00'}</td>` : ''}</tr>`;
   }).join('');
   const formas = `<div class="section-title" style="margin:0 0 8px">3. Formas de pagamento${fin ? ' e taxas aplicadas' : ''}</div>
     <div class="table-wrap"><table><thead><tr><th>Forma</th><th class="num">Valor</th>${fin ? '<th class="num">Taxa %</th><th class="num">Taxa descontada</th>' : ''}</tr></thead><tbody>${pagRows}</tbody>
@@ -4304,7 +4321,9 @@ const Taxas = {
     return Math.round(((valor || 0) * ((t.percent || 0) / 100) + (t.fixo || 0)) * 100) / 100;
   },
   fee(pag) { return this.feeByKey(this.keyFor(pag.tipo, pag.parcelas), pag.valor || 0); },
-  feeVenda(v) { return (v.pagamentos || []).reduce((s, p) => s + (p.taxa != null ? p.taxa : this.fee(p)), 0); }
+  feeVenda(v) { return (v.pagamentos || []).reduce((s, p) => s + (p.taxa != null ? p.taxa : this.fee(p)), 0); },
+  isFinanceira(key) { const t = this.get(key); return !!(t && t.tipo === 'financeira'); },
+  financeiras() { return this.ativas().filter(t => t.tipo === 'financeira'); }
 };
 
 const inStyle = 'background:var(--bg-2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:7px 10px';
@@ -4335,16 +4354,19 @@ Modules.cfgTaxasCard = function () {
   return `<div class="card">
     <div class="section-title">💳 Taxas e Pagamentos <a onclick="Modules.cfgAdd()">+ Forma de pagamento</a></div>
     <div class="table-wrap" style="border:none"><table>
-      <thead><tr><th>Forma de pagamento</th><th class="num">Taxa (%)</th><th class="num">Taxa fixa (R$)</th><th>Prazo de recebimento</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Forma de pagamento</th><th>Tipo</th><th class="num">Taxa (%)</th><th class="num">Taxa fixa (R$)</th><th>Prazo / recebimento</th><th>Status</th><th></th></tr></thead>
       <tbody>${t.map(x => `<tr>
-        <td class="strong">${esc(x.nome)}</td>
-        <td class="num"><input type="number" step="0.01" value="${x.percent}" style="${inStyle};width:90px;text-align:right" onchange="Modules.cfgSet('${x.id}','percent',this.value)"></td>
-        <td class="num"><input type="number" step="0.01" value="${x.fixo || 0}" style="${inStyle};width:90px;text-align:right" onchange="Modules.cfgSet('${x.id}','fixo',this.value)"></td>
-        <td><input value="${esc(x.prazo || '')}" style="${inStyle};width:140px" onchange="Modules.cfgSet('${x.id}','prazo',this.value)"></td>
+        <td class="strong">${esc(x.nome)}${x.tipo === 'financeira' && x.conta ? `<div class="muted" style="font-size:11px">conta: ${esc(x.conta)}</div>` : ''}</td>
+        <td>${x.tipo === 'financeira' ? '<span class="badge b-purple">🏦 Financeira</span>' : '<span class="badge b-gray">💳 Maquininha</span>'}</td>
+        <td class="num"><input type="number" step="0.01" value="${x.percent}" style="${inStyle};width:84px;text-align:right" onchange="Modules.cfgSet('${x.id}','percent',this.value)"></td>
+        <td class="num"><input type="number" step="0.01" value="${x.fixo || 0}" style="${inStyle};width:84px;text-align:right" onchange="Modules.cfgSet('${x.id}','fixo',this.value)"></td>
+        <td>${x.tipo === 'financeira'
+          ? `<input type="number" value="${x.prazoDias || 0}" style="${inStyle};width:70px;text-align:right" onchange="Modules.cfgSet('${x.id}','prazoDias',this.value)"> <span class="muted" style="font-size:11px">dias</span>`
+          : `<input value="${esc(x.prazo || '')}" style="${inStyle};width:130px" onchange="Modules.cfgSet('${x.id}','prazo',this.value)">`}</td>
         <td><label style="display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-size:12.5px;color:var(--txt-2)"><input type="checkbox" ${x.ativo !== false ? 'checked' : ''} onchange="Modules.cfgSet('${x.id}','ativo',this.checked)"> ${x.ativo !== false ? 'Ativo' : 'Inativo'}</label></td>
         <td class="num">${x.custom ? `<button class="btn-icon" onclick="Modules.cfgDel('${x.id}')">🗑️</button>` : ''}</td>
       </tr>`).join('')}</tbody></table></div>
-    <p class="muted" style="margin-top:14px;font-size:12px;line-height:1.6">💡 Exemplo: Crédito 10x com 12% → numa venda de R$ 1.500, a taxa da maquininha é R$ 180, descontada do lucro automaticamente.</p>
+    <p class="muted" style="margin-top:14px;font-size:12px;line-height:1.6">💡 Maquininha (Crédito/Débito): a taxa é descontada do lucro na hora.<br>🏦 <b>Financeira / Boleto</b> (ex: Brasil Card): a venda vira <b>Conta a Receber</b> — o valor líquido entra no caixa só quando você marcar como recebido, após o prazo em dias.</p>
   </div>`;
 };
 
@@ -4524,6 +4546,7 @@ Modules.cfgUserDel = function (id) {
 Modules.cfgSet = function (id, field, value) {
   const patch = {};
   if (field === 'percent' || field === 'fixo') patch[field] = parseFloat(String(value).replace(',', '.')) || 0;
+  else if (field === 'prazoDias') { patch.prazoDias = parseInt(value) || 0; patch.prazo = (patch.prazoDias || 0) + ' dias'; }
   else if (field === 'ativo') patch.ativo = value;
   else patch[field] = value;
   DB.update('taxas', id, patch);
@@ -4534,18 +4557,30 @@ Modules.cfgAdd = function () {
   Modal.open({
     title: '+ Nova forma de pagamento',
     body: `<div class="form-grid">
-      <div class="field full"><label>Nome *</label><input id="cfg-nome" placeholder="Ex: Voucher / Cartão da loja"></div>
+      <div class="field"><label>Tipo</label><select id="cfg-tipo" onchange="Modules.cfgAddToggle()"><option value="maquininha">💳 Maquininha (recebe na hora)</option><option value="financeira">🏦 Boleto / Financeira (recebe depois)</option></select></div>
+      <div class="field"><label>Nome *</label><input id="cfg-nome" placeholder="Ex: Brasil Card"></div>
       <div class="field"><label>Taxa (%)</label><input id="cfg-pct" type="number" step="0.01" value="0"></div>
       <div class="field"><label>Taxa fixa (R$)</label><input id="cfg-fixo" type="number" step="0.01" value="0"></div>
-      <div class="field full"><label>Prazo de recebimento</label><input id="cfg-prazo" placeholder="Ex: 30 dias"></div>
+      <div class="field" id="cfg-prazo-wrap"><label>Prazo de recebimento</label><input id="cfg-prazo" placeholder="Ex: 30 dias"></div>
+      <div class="field" id="cfg-prazod-wrap" style="display:none"><label>Prazo de recebimento (dias)</label><input id="cfg-prazod" type="number" value="7"></div>
+      <div class="field full" id="cfg-conta-wrap" style="display:none"><label>Conta de recebimento</label><input id="cfg-conta" placeholder="Ex: Banco / conta onde o dinheiro cai"></div>
     </div>`,
     foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.cfgSaveNew()">Adicionar</button>`
   });
 };
+Modules.cfgAddToggle = function () {
+  const fin = fval('cfg-tipo') === 'financeira';
+  const show = (id, on) => { const e = document.getElementById(id); if (e) e.style.display = on ? '' : 'none'; };
+  show('cfg-prazo-wrap', !fin); show('cfg-prazod-wrap', fin); show('cfg-conta-wrap', fin);
+};
 Modules.cfgSaveNew = function () {
   const nome = fval('cfg-nome'); if (!nome) return Toast.err('Informe o nome.');
-  DB.insert('taxas', { key: nome, nome, percent: fnum('cfg-pct'), fixo: fnum('cfg-fixo'), prazo: fval('cfg-prazo'), ativo: true, custom: true });
-  Modal.close(); Toast.ok('Forma de pagamento adicionada.'); App.go('config');
+  const tipo = fval('cfg-tipo') || 'maquininha';
+  const o = { key: nome, nome, percent: fnum('cfg-pct'), fixo: fnum('cfg-fixo'), ativo: true, custom: true, tipo };
+  if (tipo === 'financeira') { o.prazoDias = parseInt(fval('cfg-prazod')) || 0; o.conta = fval('cfg-conta'); o.prazo = (o.prazoDias || 0) + ' dias'; }
+  else o.prazo = fval('cfg-prazo');
+  DB.insert('taxas', o);
+  Modal.close(); Toast.ok((tipo === 'financeira' ? 'Financeira' : 'Forma de pagamento') + ' adicionada.'); App.go('config');
 };
 Modules.cfgDel = function (id) {
   Modal.confirm('Remover esta forma de pagamento?', () => { DB.remove('taxas', id); App.go('config'); Toast.ok('Removida.'); }, 'Remover');
@@ -4675,9 +4710,15 @@ Modules.finOverview = function () {
   const sete = open.filter(r => { const d = F.diasAte(F.venc(r)); return d > 0 && d <= 7; });
   const proj = F.projDaily(30); const negativo = proj.find(p => p.saldo < 0);
   const sum = arr => arr.reduce((s, r) => s + F.restante(r), 0);
+  // financeira (Boleto / Financeira) — recebimentos a conciliar
+  const finRec = F.recs().filter(r => r.financeira && F.isOpen(r));
+  const finAtraso = finRec.filter(r => F.diasAte(F.venc(r)) < 0);
+  const finHoje = finRec.filter(r => F.diasAte(F.venc(r)) === 0);
+  const finPend = finRec.reduce((s, r) => s + F.restante(r), 0);
 
   return `
   <div class="alerts">
+    ${finRec.length ? `<div class="alert-card ${finAtraso.length ? 'danger' : 'warn'}"><div class="a-ico">🏦</div><div><div class="a-val">${Fmt.brl(finPend)}</div><div class="a-lbl">Financeira a conciliar (${finRec.length})${finAtraso.length ? ' · ' + finAtraso.length + ' atrasado(s)' : ''}${finHoje.length ? ' · ' + finHoje.length + ' hoje' : ''}</div></div></div>` : ''}
     ${vencidas.length ? `<div class="alert-card danger"><div class="a-ico">⏰</div><div><div class="a-val">${Fmt.brl(sum(vencidas))}</div><div class="a-lbl">${vencidas.length} conta(s) vencida(s)</div></div></div>` : `<div class="alert-card ok"><div class="a-ico">✅</div><div><div class="a-val">Em dia</div><div class="a-lbl">Nenhuma conta vencida</div></div></div>`}
     ${hoje.length ? `<div class="alert-card warn"><div class="a-ico">📌</div><div><div class="a-val">${Fmt.brl(sum(hoje))}</div><div class="a-lbl">Vence hoje (${hoje.length})</div></div></div>` : ''}
     <div class="alert-card warn"><div class="a-ico">🗓️</div><div><div class="a-val">${Fmt.brl(sum(sete))}</div><div class="a-lbl">Vence em 7 dias (${sete.length})</div></div></div>
@@ -5737,7 +5778,35 @@ Modules.biPagHtml = function (ctx) {
   const insights = `<div class="card" style="margin-top:16px"><div class="section-title">💡 Insights</div>
     <div style="display:flex;flex-direction:column;gap:8px">${ins.map(t => `<div class="pag-insight">💬 ${esc(t)}</div>`).join('')}</div></div>`;
 
-  return kpis + comp + grafico + `<div class="grid cols-2" style="margin-bottom:0">${tabela}${ranking}</div>` + insights;
+  return kpis + comp + grafico + `<div class="grid cols-2" style="margin-bottom:0">${tabela}${ranking}</div>` + Modules.biFinanceiraCard(ctx) + insights;
+};
+/* ---------- Boleto / Financeira (contas a receber) ---------- */
+Modules.biFinanceiraCard = function (ctx) {
+  const r = ctx.r;
+  const recs = DB.all('financeiro').filter(f => f.financeira && f.origem === 'venda').filter(f => { const d = new Date(f.emissao || f.data); return d >= r.start && d <= r.end; });
+  if (!recs.length) return '';
+  const recebido = f => f.status === 'recebido' || f.status === 'pago' || f.status === 'conciliado' || (f.pago || 0) >= (f.valor || 0) - 0.01;
+  const bruto = recs.reduce((s, f) => s + (f.valor || 0), 0);
+  const taxas = recs.reduce((s, f) => s + (f.taxa || 0), 0);
+  const liquidoTot = recs.reduce((s, f) => s + (f.liquido != null ? f.liquido : (f.valor - (f.taxa || 0))), 0);
+  const recebidos = recs.filter(recebido), pendentes = recs.filter(f => !recebido(f));
+  const jaRecebido = recebidos.reduce((s, f) => s + (f.liquido != null ? f.liquido : (f.valor - (f.taxa || 0))), 0);
+  const aReceber = pendentes.reduce((s, f) => s + (f.liquido != null ? f.liquido : (f.valor - (f.taxa || 0))), 0);
+  const prazoMed = recs.length ? recs.reduce((s, f) => { const e = new Date(f.emissao || f.data), vc = new Date(f.vencimento || f.data); return s + Math.max(0, Math.round((vc - e) / 86400000)); }, 0) / recs.length : 0;
+  const porFin = {};
+  recs.forEach(f => { const k = f.financeiraNome || 'Financeira'; porFin[k] = porFin[k] || { nome: k, bruto: 0, taxa: 0, liquido: 0, n: 0 }; porFin[k].bruto += f.valor || 0; porFin[k].taxa += f.taxa || 0; porFin[k].liquido += (f.liquido != null ? f.liquido : f.valor - (f.taxa || 0)); porFin[k].n++; });
+  const fins = Object.values(porFin).sort((a, b) => b.bruto - a.bruto);
+  return `<div class="card" style="margin-top:16px"><div class="section-title">🏦 Boleto / Financeira — contas a receber</div>
+    <div class="grid kpis" style="margin-bottom:14px">
+      ${kpi('Vendido por financeira', Fmt.brl(bruto), recs.length + ' venda(s)', '🏦', 'purple')}
+      ${kpi('Taxas das financeiras', Fmt.brl(taxas), bruto ? Fmt.pct(taxas / bruto * 100) + ' do bruto' : '', '💳', 'red')}
+      ${kpi('Líquido a receber', Fmt.brl(aReceber), pendentes.length + ' pendente(s)', '⏳', 'amber')}
+      ${kpi('Já recebido', Fmt.brl(jaRecebido), recebidos.length + ' conciliado(s)', '✅', 'green')}
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Financeira</th><th class="num">Vendas</th><th class="num">Bruto</th><th class="num">Taxas</th><th class="num">Líquido</th></tr></thead>
+      <tbody>${fins.map(x => `<tr><td><b>${esc(x.nome)}</b></td><td class="num">${x.n}</td><td class="num">${Fmt.brl(x.bruto)}</td><td class="num" style="color:var(--red)">− ${Fmt.brl(x.taxa)}</td><td class="num strong" style="color:var(--green)">${Fmt.brl(x.liquido)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr style="font-weight:700;border-top:2px solid var(--line)"><td>TOTAL</td><td class="num">${recs.length}</td><td class="num">${Fmt.brl(bruto)}</td><td class="num" style="color:var(--red)">− ${Fmt.brl(taxas)}</td><td class="num" style="color:var(--green)">${Fmt.brl(liquidoTot)}</td></tr></tfoot></table></div>
+    <div class="muted" style="font-size:12px;margin-top:8px">Prazo médio de recebimento: <b>${Math.round(prazoMed)} dia(s)</b>. Concilie os recebimentos em Financeiro → Contas a Receber quando o valor cair na conta.</div></div>`;
 };
 Modules.biPagExport = function () {
   const ctx = Modules.biPagCompute(); const cur = ctx.cur, r = ctx.r, r2 = x => Math.round(x * 100) / 100;
