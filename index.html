@@ -519,7 +519,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 3.5 · estoque x manutenção</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 3.6 · compras simples</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -2157,6 +2157,7 @@ const Modules = {
     const fs = DB.all('fornecedores');
     const resp = (typeof App !== 'undefined' && App.user() && App.user().nome) ? App.user().nome : 'Admin';
     const formasPg = ['Dinheiro', 'PIX', 'Débito', 'Crédito à vista', 'Transferência', 'Boleto'];
+    const hoje = new Date().toISOString().slice(0, 10);
     Modal.open({
       title: '🛒 Nova compra', wide: true,
       body: `<div class="section-title" style="margin-top:0">Produto comprado</div>
@@ -2166,12 +2167,12 @@ const Modules = {
         <div class="field"><label>Quantidade</label><input id="ci-qtd" type="number" min="1" value="1"></div>
         <div class="field"><label>Custo unitário (R$)</label><input id="ci-custo" type="text" inputmode="decimal" placeholder="ex: 280,00"></div>
         <div class="field"><label>Condição</label><select id="ci-cond"><option value="novo">novo</option><option value="seminovo">seminovo</option><option value="usado">usado</option></select></div>
-        <div class="field full"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="ci-manut"> 🟠 Entrar em manutenção (entra no estoque físico, mas não fica disponível para venda)</label></div>
       </div>
       <button class="btn-primary btn-sm" style="margin-top:10px" onclick="Modules.addCompraItem()">+ Adicionar à compra</button>
       <div id="compra-itens" style="margin-top:14px"></div>
       <div class="form-grid" style="margin-top:14px">
         <div class="field"><label>Forma de pagamento</label><select id="c-forma">${formasPg.map(f => `<option ${f === 'Dinheiro' ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
+        <div class="field"><label>Data da compra</label><input type="date" id="c-data" value="${hoje}"></div>
         <div class="field"><label>&nbsp;</label><label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;padding-top:4px"><input type="checkbox" id="c-prazo" onchange="Modules.compraTogglePrazo()"> 📅 Compra a prazo (lançar em Contas a Pagar)</label></div>
         <div class="field" id="c-venc-wrap" style="display:none"><label>Vencimento</label><input type="date" id="c-venc"></div>
       </div>
@@ -2201,9 +2202,8 @@ const Modules = {
     if (qtd <= 0) return Toast.err('Quantidade deve ser maior que zero.');
     if (isNaN(custo) || custo < 0) return Toast.err('Informe um custo unitário válido.');
     const existente = DB.all('produtos').find(p => p.nome.toLowerCase() === nome.toLowerCase());
-    this.compraItens.push({ nome, qtd, custo, condicao: fval('ci-cond') || 'novo', manutencao: fchk('ci-manut'), sku: existente ? existente.sku : null, produtoId: existente ? existente.id : null });
+    this.compraItens.push({ nome, qtd, custo, condicao: fval('ci-cond') || 'novo', sku: existente ? existente.sku : null, produtoId: existente ? existente.id : null });
     document.getElementById('ci-prod').value = ''; document.getElementById('ci-qtd').value = '1'; document.getElementById('ci-custo').value = '';
-    const cm = document.getElementById('ci-manut'); if (cm) cm.checked = false;
     document.getElementById('ci-prod').focus();
     this.renderCompraResumo();
   },
@@ -2229,18 +2229,16 @@ const Modules = {
         const p = DB.get('produtos', i.produtoId);
         const qtdNova = p.qtd + i.qtd;
         const custoMedio = qtdNova ? (((p.custoMedio || p.custo || 0) * p.qtd) + i.custo * i.qtd) / qtdNova : i.custo;
-        const patch = { qtd: qtdNova, custoMedio: Math.round(custoMedio * 100) / 100, custo: i.custo };
-        if (i.manutencao) { patch.manutencao = (p.manutencao || 0) + i.qtd; if (Modules.disp({ qtd: qtdNova, reservado: p.reservado, manutencao: patch.manutencao }) <= 0) patch.status = 'manutencao'; }
-        else patch.status = 'disponivel';
-        DB.update('produtos', i.produtoId, patch);
+        // compra entra direto no estoque disponível (sem status de manutenção)
+        DB.update('produtos', i.produtoId, { qtd: qtdNova, custoMedio: Math.round(custoMedio * 100) / 100, custo: i.custo, status: 'disponivel' });
       } else {
-        const novo = DB.insert('produtos', { nome: i.nome, sku: 'NEW-' + Date.now().toString(36).toUpperCase().slice(-5), barcode: '', categoria: 'Acessórios', marca: '—', modelo: '', condicao: i.condicao || 'novo', qtd: i.qtd, min: 1, custo: i.custo, custoMedio: Math.round(i.custo * 100) / 100, preco: Math.round(i.custo * 1.6), serie: '', local: 'A definir', status: i.manutencao ? 'manutencao' : 'disponivel', manutencao: i.manutencao ? i.qtd : 0, criadoEm: new Date().toISOString(), custoHist: [], precoHist: [] });
+        const novo = DB.insert('produtos', { nome: i.nome, sku: 'NEW-' + Date.now().toString(36).toUpperCase().slice(-5), barcode: '', categoria: 'Acessórios', marca: '—', modelo: '', condicao: i.condicao || 'novo', qtd: i.qtd, min: 1, custo: i.custo, custoMedio: Math.round(i.custo * 100) / 100, preco: Math.round(i.custo * 1.6), serie: '', local: 'A definir', status: 'disponivel', manutencao: 0, criadoEm: new Date().toISOString(), custoHist: [], precoHist: [] });
         i.produtoId = novo.id;
       }
     });
     const forma = fval('c-forma') || 'Dinheiro';
     const aPrazo = fchk('c-prazo');
-    const hojeISO = new Date().toISOString();
+    const hojeISO = fval('c-data') ? (fval('c-data') + 'T12:00:00') : new Date().toISOString();
     const venc = fval('c-venc') ? (fval('c-venc') + 'T12:00:00') : hojeISO;
     const compra = DB.insert('compras', {
       data: hojeISO, fornecedorId: fornId, nf: '', obs, responsavel: resp, formaPagamento: forma, aPrazo,
