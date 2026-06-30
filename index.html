@@ -519,7 +519,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 3.4 · boleto / financeira</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 3.5 · estoque x manutenção</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -1356,6 +1356,7 @@ const Modules = {
       ${kpi('Produtos em estoque', Fmt.num(DB.all('produtos').length) + ' itens', c.estoqueUnidades() + ' unidades', '🗃️', '')}
       ${kpi('Estoque baixo', Fmt.num(baixo.length), 'Abaixo do mínimo', '⚠️', 'amber')}
       ${kpi('Produtos parados', Fmt.num(parados.length), 'Sem venda há 60d', '🐌', 'red')}
+      <div class="card kpi amber" style="cursor:pointer" onclick="Modules.manutencaoLista()"><div class="kpi-ico">🟠</div><div class="kpi-label">Produtos em manutenção</div><div class="kpi-value">${Fmt.num(DB.all('produtos').reduce((s, p) => s + (p.manutencao || 0), 0))}</div><div class="kpi-sub">clique para ver a lista</div></div>
       ${kpi('Contas a pagar', Fmt.brl(c.contasPagar()), 'Contas a receber: ' + Fmt.brl(c.contasReceber()), '🧾', 'red')}
     </div>
 
@@ -1418,7 +1419,7 @@ const Modules = {
       <input class="grow" id="est-search" placeholder="Buscar nome, SKU ou código..." oninput="Modules.renderEstoqueTable()" />
       <select id="est-cat" onchange="Modules.renderEstoqueTable()"><option value="">Todas categorias</option>${cats.map(c => `<option>${c}</option>`).join('')}</select>
       <select id="est-cond" onchange="Modules.renderEstoqueTable()"><option value="">Toda condição</option><option>novo</option><option>seminovo</option><option>usado</option></select>
-      <select id="est-status" onchange="Modules.renderEstoqueTable()"><option value="">Todo status</option><option value="disponivel">Disponível</option><option value="baixo">Estoque baixo</option></select>
+      <select id="est-status" onchange="Modules.renderEstoqueTable()"><option value="">Todo status</option><option value="disponivel">Disponível p/ venda</option><option value="manutencao">Em manutenção</option><option value="baixo">Estoque baixo</option></select>
     </div>
     <div id="est-table"></div>`;
   },
@@ -1429,27 +1430,36 @@ const Modules = {
       if (q && !(p.nome.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || (p.barcode || '').includes(q))) return false;
       if (cat && p.categoria !== cat) return false;
       if (cond && p.condicao !== cond) return false;
+      const disp = Modules.disp(p);
       if (st === 'baixo' && p.qtd > p.min) return false;
-      if (st === 'disponivel' && p.status !== 'disponivel') return false;
+      if (st === 'disponivel' && disp <= 0) return false;
+      if (st === 'manutencao' && !(p.manutencao > 0)) return false;
       return true;
     });
     const canEd = App.can('podeEditarProduto'), canFin = App.canFinance();
-    const rows = list.map(p => `
+    const rows = list.map(p => {
+      const disp = Modules.disp(p), res = p.reservado || 0, man = p.manutencao || 0;
+      const dot = disp > 0 ? '🟢' : (man > 0 ? '🟠' : (res > 0 ? '🟡' : (p.status === 'manutencao' ? '🟠' : '🔴')));
+      return `
       <tr>
-        <td><div class="strong prod-link" style="cursor:pointer;color:var(--accent,#5b8cff)" onclick="ProdHist.open('${p.id}')" title="Ver histórico do produto">${esc(p.nome)} 🔎</div><div class="muted" style="font-size:11.5px">${p.sku}${p.serie ? ' · S/N ' + p.serie : ''}</div></td>
+        <td><div class="strong prod-link" style="cursor:pointer;color:var(--accent,#5b8cff)" onclick="ProdHist.open('${p.id}')" title="Ver histórico do produto">${dot} ${esc(p.nome)} 🔎</div><div class="muted" style="font-size:11.5px">${p.sku}${p.serie ? ' · S/N ' + p.serie : ''}</div></td>
         <td>${p.categoria}<div class="muted" style="font-size:11px">${p.marca}</div></td>
         <td>${condBadge(p.condicao)}</td>
-        <td class="num ${p.qtd <= p.min ? 'down strong' : ''}" style="${p.qtd <= p.min ? 'color:var(--red)' : ''}">${p.qtd}${p.qtd <= p.min ? ' ⚠️' : ''}<div class="muted" style="font-size:11px">mín ${p.min}${p.reservado ? ' · <span style="color:var(--amber)" title="reservadas em pré-venda">' + p.reservado + ' res.</span>' : ''}</div></td>
+        <td class="num strong">${p.qtd}<div class="muted" style="font-size:11px">mín ${p.min}</div></td>
+        <td class="num ${disp <= p.min ? 'down strong' : ''}" style="${disp <= 0 ? 'color:var(--red)' : (disp <= p.min ? 'color:var(--amber)' : 'color:var(--green)')};font-weight:700">${disp}${disp <= 0 ? ' ⛔' : (disp <= p.min ? ' ⚠️' : '')}</td>
+        <td class="num">${res ? '<span class="badge b-amber" title="reservado em pré-venda">' + res + '</span>' : '<span class="muted">0</span>'}</td>
+        <td class="num">${man ? '<span class="badge b-amber" style="background:#f9731620;color:#f97316" title="em manutenção">🟠 ' + man + '</span>' : '<span class="muted">0</span>'}</td>
         ${canFin ? `<td class="num">${Fmt.brl(p.custoMedio || p.custo)}</td>` : ''}
         <td class="num strong">${Fmt.brl(p.preco)}</td>
         ${canFin ? `<td class="num"><span class="badge b-green">${Fmt.pct((p.preco - (p.custoMedio || p.custo)) / p.preco * 100)}</span></td>` : ''}
         <td>${p.local || '-'}</td>
-        <td>${statusBadge(p.status)}</td>
         ${canEd ? `<td class="num"><button class="btn-icon" onclick="Modules.produtoForm('${p.id}')">✏️</button> <button class="btn-icon" onclick="Modules.delProduto('${p.id}')">🗑️</button></td>` : ''}
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
     document.getElementById('est-table').innerHTML = `<div class="table-wrap"><table>
-      <thead><tr><th>Produto</th><th>Categoria</th><th>Condição</th><th class="num">Qtd</th>${canFin ? '<th class="num">Custo méd.</th>' : ''}<th class="num">Preço</th>${canFin ? '<th class="num">Margem</th>' : ''}<th>Local</th><th>Status</th>${canEd ? '<th></th>' : ''}</tr></thead>
-      <tbody>${rows || '<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">Nenhum produto encontrado.</td></tr>'}</tbody></table></div>`;
+      <thead><tr><th>Produto</th><th>Categoria</th><th>Condição</th><th class="num">Estoque total</th><th class="num">Disponível</th><th class="num">Reservado</th><th class="num">Manutenção</th>${canFin ? '<th class="num">Custo méd.</th>' : ''}<th class="num">Preço</th>${canFin ? '<th class="num">Margem</th>' : ''}<th>Local</th>${canEd ? '<th></th>' : ''}</tr></thead>
+      <tbody>${rows || '<tr><td colspan="12" class="muted" style="text-align:center;padding:30px">Nenhum produto encontrado.</td></tr>'}</tbody></table></div>
+      <div class="muted" style="font-size:12px;margin-top:8px">🟢 Disponível · 🟡 Reservado · 🟠 Em manutenção · 🔴 Sem disponível. Disponível = Estoque total − Reservado − Manutenção.</div>`;
   },
   produtoForm(id) {
     const p = id ? DB.get('produtos', id) : {};
@@ -1470,14 +1480,42 @@ const Modules = {
         <div class="field"><label>Preço de venda (R$)</label><input id="p-preco" type="text" inputmode="decimal" placeholder="ex: 1.999,90" value="${p.preco != null ? String(p.preco).replace('.', ',') : ''}"></div>
         <div class="field"><label>Nº de série (opcional)</label><input id="p-serie" value="${esc(p.serie || '')}"></div>
         <div class="field"><label>Localização</label><input id="p-local" value="${esc(p.local || '')}"></div>
-        <div class="field"><label>Status</label><select id="p-status">
+        <div class="field"><label>Status</label><select id="p-status" onchange="Modules.pStatusChange()">
           ${['disponivel', 'reservado', 'vendido', 'manutencao', 'garantia'].map(s => `<option value="${s}" ${p.status === s ? 'selected' : ''}>${s}</option>`).join('')}
         </select></div>
+        <div class="field"><label>Em manutenção (un) <span class="muted" style="font-weight:400">não vendável</span></label><input id="p-manut" type="number" min="0" value="${p.manutencao || 0}"></div>
         <div class="field full"><label style="display:flex;align-items:center;gap:9px;cursor:pointer"><input type="checkbox" id="p-prevenda" ${p.prevenda ? 'checked' : ''}> 📋 Produto em Pré-venda (pode ser vendido antes de chegar — não dá baixa no estoque até a entrega)</label></div>
       </div>
       ${(p.custoHist && p.custoHist.length) ? `<div style="margin-top:14px"><div style="font-size:12.5px;font-weight:700;color:var(--txt-2);margin-bottom:6px">Histórico de custo</div>${p.custoHist.slice(0, 6).map(h => `<div class="mini-stat"><span>${Fmt.datetime(h.data)} · ${esc(h.usuario || 'Admin')}</span><span>${Fmt.brl(h.de)} → <b>${Fmt.brl(h.para)}</b></span></div>`).join('')}</div>` : ''}`,
       foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.saveProduto('${id || ''}')">Salvar</button>`
     });
+  },
+  manutencaoLista() {
+    const list = DB.all('produtos').filter(p => (p.manutencao || 0) > 0).sort((a, b) => (b.manutencao || 0) - (a.manutencao || 0));
+    const canFin = App.canFinance();
+    const valor = list.reduce((s, p) => s + (p.custoMedio || p.custo || 0) * (p.manutencao || 0), 0);
+    Modal.open({
+      title: '🟠 Produtos em manutenção', wide: true,
+      body: list.length ? `<div class="muted" style="margin-bottom:10px">${list.reduce((s, p) => s + (p.manutencao || 0), 0)} unidade(s) em manutenção${canFin ? ' · ' + Fmt.brl(valor) + ' investidos' : ''}.</div>
+        <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Categoria</th><th class="num">Físico</th><th class="num">Em manut.</th><th class="num">Disponível</th>${canFin ? '<th class="num">Custo méd.</th>' : ''}<th></th></tr></thead>
+        <tbody>${list.map(p => `<tr>
+          <td class="strong">${esc(p.nome)}<div class="muted" style="font-size:11px">${p.sku}${p.serie ? ' · S/N ' + p.serie : ''}</div></td>
+          <td>${esc(p.categoria)}</td>
+          <td class="num">${p.qtd}</td>
+          <td class="num"><span class="badge b-amber" style="background:#f9731620;color:#f97316">🟠 ${p.manutencao}</span></td>
+          <td class="num" style="color:${this.disp(p) > 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${this.disp(p)}</td>
+          ${canFin ? `<td class="num">${Fmt.brl(p.custoMedio || p.custo)}</td>` : ''}
+          <td class="num">${App.can('podeEditarProduto') ? `<button class="btn-ghost btn-sm" onclick="Modal.close();Modules.produtoForm('${p.id}')">✏️ Concluir manutenção</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
+        <div class="muted" style="font-size:12px;margin-top:8px">Para liberar para venda: edite o produto e reduza a quantidade "Em manutenção" (ou mude o status para <b>Disponível</b>).</div>`
+        : '<div class="empty-state"><div class="big">✅</div>Nenhum produto em manutenção.</div>',
+      foot: `<button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
+    });
+  },
+  pStatusChange() {
+    const st = fval('p-status'), qtd = parseInt(fval('p-qtd')) || 0, m = document.getElementById('p-manut');
+    if (!m) return;
+    if (st === 'manutencao' && (parseInt(m.value) || 0) === 0) m.value = qtd; // tudo em manutenção
+    else if (st === 'disponivel') m.value = 0;                                // concluiu manutenção → libera p/ venda
   },
   saveProduto(id) {
     const nome = fval('p-nome'), sku = fval('p-sku');
@@ -1490,7 +1528,8 @@ const Modules = {
       nome, sku, barcode: fval('p-barcode'), categoria: fval('p-cat'), marca: fval('p-marca'),
       modelo: fval('p-modelo'), condicao: fval('p-cond'), qtd: parseInt(fval('p-qtd')) || 0,
       min: parseInt(fval('p-min')) || 0, custo, custoMedio: custo, preco,
-      serie: fval('p-serie'), local: fval('p-local'), status: fval('p-status'), prevenda: fchk('p-prevenda')
+      serie: fval('p-serie'), local: fval('p-local'), status: fval('p-status'), prevenda: fchk('p-prevenda'),
+      manutencao: Math.max(0, parseInt(fval('p-manut')) || 0)
     };
     if (id) {
       const cur = DB.get('produtos', id) || {};
@@ -1657,10 +1696,10 @@ const Modules = {
     </div>`;
   },
   condColor(c) { return c === 'novo' ? 'var(--green)' : c === 'seminovo' ? 'var(--blue)' : 'var(--amber)'; },
-  disp(p) { return (p.qtd || 0) - (p.reservado || 0); }, // unidades disponíveis (descontando reservas de pré-venda)
+  disp(p) { return Math.max(0, (p.qtd || 0) - (p.reservado || 0) - (p.manutencao || 0)); }, // disponível p/ venda = físico − reservado − em manutenção
   pdvSearch() {
     const q = (fval('pdv-q') || '').toLowerCase();
-    let list = DB.all('produtos').filter(p => (this.disp(p) > 0 || p.prevenda) && p.status === 'disponivel');
+    let list = DB.all('produtos').filter(p => (this.disp(p) > 0 || p.prevenda) && p.status !== 'vendido');
     if (q) list = list.filter(p => p.nome.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || (p.barcode || '').includes(q));
     list = list.slice(0, 24);
     document.getElementById('pdv-results').innerHTML = list.map(p => {
@@ -2026,6 +2065,7 @@ const Modules = {
         const patch = { qtd: qNova, custo: u.valor, custoMedio: Math.round(custoMedio * 100) / 100 };
         if (u.serie && !p.serie) patch.serie = u.serie;
         if (u.statusInicial && u.statusInicial !== 'Disponível') patch.status = stMap[u.statusInicial] || p.status;
+        if (stMap[u.statusInicial] === 'manutencao') patch.manutencao = (p.manutencao || 0) + 1; // unidade entra em manutenção, não disponível
         DB.update('produtos', u.produtoId, patch);
       }
       // Usado recebido como pagamento é uma forma NÃO-financeira: só entra no estoque/histórico,
@@ -2126,6 +2166,7 @@ const Modules = {
         <div class="field"><label>Quantidade</label><input id="ci-qtd" type="number" min="1" value="1"></div>
         <div class="field"><label>Custo unitário (R$)</label><input id="ci-custo" type="text" inputmode="decimal" placeholder="ex: 280,00"></div>
         <div class="field"><label>Condição</label><select id="ci-cond"><option value="novo">novo</option><option value="seminovo">seminovo</option><option value="usado">usado</option></select></div>
+        <div class="field full"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="ci-manut"> 🟠 Entrar em manutenção (entra no estoque físico, mas não fica disponível para venda)</label></div>
       </div>
       <button class="btn-primary btn-sm" style="margin-top:10px" onclick="Modules.addCompraItem()">+ Adicionar à compra</button>
       <div id="compra-itens" style="margin-top:14px"></div>
@@ -2160,8 +2201,9 @@ const Modules = {
     if (qtd <= 0) return Toast.err('Quantidade deve ser maior que zero.');
     if (isNaN(custo) || custo < 0) return Toast.err('Informe um custo unitário válido.');
     const existente = DB.all('produtos').find(p => p.nome.toLowerCase() === nome.toLowerCase());
-    this.compraItens.push({ nome, qtd, custo, condicao: fval('ci-cond') || 'novo', sku: existente ? existente.sku : null, produtoId: existente ? existente.id : null });
+    this.compraItens.push({ nome, qtd, custo, condicao: fval('ci-cond') || 'novo', manutencao: fchk('ci-manut'), sku: existente ? existente.sku : null, produtoId: existente ? existente.id : null });
     document.getElementById('ci-prod').value = ''; document.getElementById('ci-qtd').value = '1'; document.getElementById('ci-custo').value = '';
+    const cm = document.getElementById('ci-manut'); if (cm) cm.checked = false;
     document.getElementById('ci-prod').focus();
     this.renderCompraResumo();
   },
@@ -2187,9 +2229,12 @@ const Modules = {
         const p = DB.get('produtos', i.produtoId);
         const qtdNova = p.qtd + i.qtd;
         const custoMedio = qtdNova ? (((p.custoMedio || p.custo || 0) * p.qtd) + i.custo * i.qtd) / qtdNova : i.custo;
-        DB.update('produtos', i.produtoId, { qtd: qtdNova, custoMedio: Math.round(custoMedio * 100) / 100, custo: i.custo, status: 'disponivel' });
+        const patch = { qtd: qtdNova, custoMedio: Math.round(custoMedio * 100) / 100, custo: i.custo };
+        if (i.manutencao) { patch.manutencao = (p.manutencao || 0) + i.qtd; if (Modules.disp({ qtd: qtdNova, reservado: p.reservado, manutencao: patch.manutencao }) <= 0) patch.status = 'manutencao'; }
+        else patch.status = 'disponivel';
+        DB.update('produtos', i.produtoId, patch);
       } else {
-        const novo = DB.insert('produtos', { nome: i.nome, sku: 'NEW-' + Date.now().toString(36).toUpperCase().slice(-5), barcode: '', categoria: 'Acessórios', marca: '—', modelo: '', condicao: i.condicao || 'novo', qtd: i.qtd, min: 1, custo: i.custo, custoMedio: Math.round(i.custo * 100) / 100, preco: Math.round(i.custo * 1.6), serie: '', local: 'A definir', status: 'disponivel', criadoEm: new Date().toISOString(), custoHist: [], precoHist: [] });
+        const novo = DB.insert('produtos', { nome: i.nome, sku: 'NEW-' + Date.now().toString(36).toUpperCase().slice(-5), barcode: '', categoria: 'Acessórios', marca: '—', modelo: '', condicao: i.condicao || 'novo', qtd: i.qtd, min: 1, custo: i.custo, custoMedio: Math.round(i.custo * 100) / 100, preco: Math.round(i.custo * 1.6), serie: '', local: 'A definir', status: i.manutencao ? 'manutencao' : 'disponivel', manutencao: i.manutencao ? i.qtd : 0, criadoEm: new Date().toISOString(), custoHist: [], precoHist: [] });
         i.produtoId = novo.id;
       }
     });
@@ -2278,7 +2323,8 @@ const Modules = {
       nome: a.produtoNome, sku: 'USD-' + Date.now().toString(36).toUpperCase().slice(-5), barcode: '',
       categoria: a.categoria, marca: a.marca, modelo: a.modelo, condicao: 'usado',
       qtd: 1, min: 1, custo: a.custoFinal, custoMedio: a.custoFinal, preco: a.precoSugerido,
-      serie: a.serie, local: 'Usados', status: a.estado === 'Com defeito' ? 'manutencao' : 'disponivel'
+      serie: a.serie, local: 'Usados', status: a.estado === 'Com defeito' ? 'manutencao' : 'disponivel',
+      manutencao: a.estado === 'Com defeito' ? 1 : 0
     });
     DB.logMov('usado', 'Usado aprovado p/ estoque: ' + a.produtoNome, { valor: a.custoFinal });
     DB.logFin({ tipo: 'saida', categoria: 'Compra de usado', descricao: 'Compra de usado: ' + a.produtoNome, valor: a.valorAceito, status: 'pago', origem: 'usado' });
@@ -5497,12 +5543,24 @@ Modules.biEstoque = function () {
   const parados = (typeof Calc !== 'undefined' ? Calc.produtosParados(60) : []);
   const semGiro = BI.prods().filter(p => p.qtd > 0 && !ls[p.sku]);
   const tempoMedio = (() => { const ps = BI.prods().filter(p => p.qtd > 0); return ps.length ? ps.reduce((s, p) => s + (now - new Date(p.criadoEm).getTime()) / 86400000, 0) / ps.length : 0; })();
+  const prods = BI.prods();
+  const fisico = prods.reduce((s, p) => s + (p.qtd || 0), 0);
+  const dispU = prods.reduce((s, p) => s + Math.max(0, (p.qtd || 0) - (p.reservado || 0) - (p.manutencao || 0)), 0);
+  const manutU = prods.reduce((s, p) => s + (p.manutencao || 0), 0);
+  const resU = prods.reduce((s, p) => s + (p.reservado || 0), 0);
+  const valManut = prods.reduce((s, p) => s + (p.custoMedio || p.custo || 0) * (p.manutencao || 0), 0);
   return `
   <div class="grid kpis" style="margin-bottom:16px">
-    ${kpi('Itens em estoque', Fmt.num(BI.prods().reduce((s, p) => s + p.qtd, 0)), BI.prods().length + ' SKUs', '📦', '')}
-    ${kpi('Capital em estoque', Fmt.brl(BI.prods().reduce((s, p) => s + (p.custoMedio || p.custo) * p.qtd, 0)), null, '💰', 'blue')}
+    ${kpi('Estoque físico total', Fmt.num(fisico), prods.length + ' SKUs', '📦', '')}
+    ${kpi('Disponível p/ venda', Fmt.num(dispU), null, '🟢', 'green')}
+    ${kpi('Em manutenção', Fmt.num(manutU), Fmt.brl(valManut) + ' investidos', '🟠', 'amber')}
+    ${kpi('Reservado', Fmt.num(resU), null, '🟡', 'blue')}
+  </div>
+  <div class="grid kpis" style="margin-bottom:16px">
+    ${kpi('Capital em estoque', Fmt.brl(prods.reduce((s, p) => s + (p.custoMedio || p.custo) * p.qtd, 0)), null, '💰', 'blue')}
     ${kpi('Produtos parados (60d+)', Fmt.num(parados.length), null, '🐌', 'red')}
     ${kpi('Tempo médio em estoque', Math.round(tempoMedio) + ' dias', null, '⏳', 'amber')}
+    ${kpi('SKUs sem giro', Fmt.num(semGiro.length), null, '📭', '')}
   </div>
   <div class="grid cols-2b" style="margin-bottom:16px">
     <div class="card"><div class="section-title">🏆 Mais vendidos</div>${biRankRows(maisVend, x => x.qtd, x => Fmt.brl(x.receita) + ' em receita', x => x.qtd + ' un')}</div>
