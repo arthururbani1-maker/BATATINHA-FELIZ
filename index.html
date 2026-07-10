@@ -545,7 +545,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.0.1 · recuperação por mesclagem</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.1 · sincronização em tempo real</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -587,6 +587,7 @@ td .muted,.muted{color:var(--txt-3)}
   <div id="toast-wrap" class="toast-wrap"></div>
 
   <!-- Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
 /* ============ RICO GAMES ERP — Data Layer (offline / localStorage) ============ */
 const DB = (function () {
@@ -645,7 +646,14 @@ const DB = (function () {
       if (!rem.length) { state[c] = loc; return; }
       const map = {}, order = [];
       loc.forEach(x => { if (x && x.id != null) { if (!(x.id in map)) order.push(x.id); map[x.id] = x; } });
-      rem.forEach(x => { if (!x || x.id == null) return; if (!(x.id in map)) { map[x.id] = x; order.push(x.id); added++; } else if (preferOutro) { map[x.id] = x; } });
+      rem.forEach(x => {
+        if (!x || x.id == null) return;
+        if (!(x.id in map)) { map[x.id] = x; order.push(x.id); added++; return; }
+        // conflito de id: vence o registro MAIS NOVO (versão maior). Antigo nunca sobrescreve novo.
+        const cur = map[x.id], cv = cur.__ver || 0, xv = x.__ver || 0;
+        if (xv > cv) map[x.id] = x;
+        else if (xv === cv && preferOutro) map[x.id] = x;
+      });
       state[c] = order.map(id => map[id]);
     });
     normalize(); persist();
@@ -661,13 +669,16 @@ const DB = (function () {
     if (!Array.isArray(state[c])) state[c] = [];
     if (!obj.id) obj.id = uid(c.slice(0, 3));
     obj.criadoEm = obj.criadoEm || new Date().toISOString();
+    obj.__ver = ver();                 // versão do registro (controle de concorrência)
     state[c].push(obj); save(); return obj;
   }
   function update(c, id, patch) {
     if (!Array.isArray(state[c])) state[c] = [];
     const i = state[c].findIndex(x => x.id === id);
-    if (i >= 0) { state[c][i] = Object.assign({}, state[c][i], patch); save(); return state[c][i]; }
+    if (i >= 0) { state[c][i] = Object.assign({}, state[c][i], patch, { __ver: ver() }); save(); return state[c][i]; }
   }
+  let _verLast = 0;
+  function ver() { let v = Date.now(); if (v <= _verLast) v = _verLast + 1; _verLast = v; return v; } // monotônico
   function remove(c, id) { state[c] = (state[c] || []).filter(x => x.id !== id); save(); }
 
   /* ---- Movimentações: registro central de rastreabilidade ---- */
@@ -916,6 +927,22 @@ const Cloud = {
     if (dot) dot.style.background = ok === null ? 'var(--txt-3)' : (ok ? 'var(--green)' : 'var(--amber)');
     if (dot) dot.style.boxShadow = ok ? '0 0 8px var(--green)' : 'none';
   },
+  /* Estado visual em 3 níveis: Sincronizado · Sincronizando · Offline */
+  showState() {
+    if (!this.configured()) return this.status('Offline · salvo no aparelho', null);
+    if (this.pushing || this.isDirty()) return this.status('Sincronizando…', true);
+    if (this._offline) return this.status('Offline · alterações na fila', false);
+    return this.status('Sincronizado' + (this.realtimeOn ? ' · tempo real' : ''), true);
+  },
+  /* Log interno de sincronização (diagnóstico) */
+  log(op, ok, msg) {
+    try {
+      const arr = JSON.parse(localStorage.getItem('rg_synclog') || '[]');
+      arr.unshift({ t: new Date().toISOString(), u: (typeof App !== 'undefined' && App.user && App.user()) ? App.user().nome : '—', op, ok: !!ok, msg: msg || '' });
+      localStorage.setItem('rg_synclog', JSON.stringify(arr.slice(0, 120)));
+    } catch (e) { }
+  },
+  syncLog() { try { return JSON.parse(localStorage.getItem('rg_synclog') || '[]'); } catch (e) { return []; } },
 
   async pull() {
     const c = this.cfg();
@@ -946,10 +973,11 @@ const Cloud = {
     try {
       const newRev = this.rev() + 1;
       await this.push(DB.state(), newRev);
-      this.setRev(newRev); this.clearDirty(); // só limpa "dirty" APÓS o envio ter sucesso
-      this.status('Nuvem · sincronizado', true);
+      this.setRev(newRev); this.clearDirty(); this._offline = false; // só limpa "dirty" APÓS o envio ter sucesso
+      this.log('push', true, 'rev ' + newRev);
+      this.showState();
     }
-    catch (e) { console.warn('push falhou (dados seguros no aparelho)', e); this.status('Sem conexão · salvo no aparelho', false); }
+    catch (e) { console.warn('push falhou (dados seguros no aparelho)', e); this._offline = true; this.log('push', false, String(e && e.message || e)); this.showState(); }
     this.pushing = false;
   },
   async checkRemote() {
@@ -959,13 +987,13 @@ const Cloud = {
       const row = await this.pull();
       if (row && row.data) {
         const remoteCount = DB.recordCount(row.data);
-        const res = DB.mergeRemote(row.data, row.rev || 0);       // MESCLA (união) — nunca perde registros
-        this.setRev(Math.max(this.rev(), row.rev || 0));
-        if (res.added > 0 && typeof App !== 'undefined' && App.refresh) App.refresh();
+        const res = DB.mergeRemote(row.data, row.rev || 0);       // MESCLA (união, mais-novo-vence) — nunca perde registros
+        this.setRev(Math.max(this.rev(), row.rev || 0)); this._offline = false;
+        if (res.added > 0) { this.log('pull', true, res.added + ' registros recebidos'); if (typeof App !== 'undefined' && App.refresh) App.refresh(); }
         if (DB.recordCount() > remoteCount) { this.markDirty(); this.doPush(); } // a nuvem estava sem registros que temos → reenviar a união
-        this.status(res.added > 0 ? 'Nuvem · atualizado agora' : 'Nuvem · sincronizado', true);
-      } else this.status('Nuvem · sincronizado', true);
-    } catch (e) { this.status('Sem conexão · local', false); }
+        this.showState();
+      } else this.showState();
+    } catch (e) { this._offline = true; this.log('pull', false, String(e && e.message || e)); this.showState(); }
   },
   async initialSync() {
     if (!this.configured()) { this.status('Offline · salvo localmente', null); this.ready = true; return; }
@@ -988,8 +1016,36 @@ const Cloud = {
   },
   /* Envia imediatamente ao sair/ocultar a página, se houver algo pendente (best-effort). */
   flush() { if (this.configured() && this.isDirty()) this.doPush(); },
-  start() { if (!this.configured()) return; this.stop(); this.syncTimer = setInterval(() => this.checkRemote(), 5000);
-    if (!this._flushBound) { this._flushBound = true; try { window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') Cloud.flush(); }); window.addEventListener('beforeunload', () => Cloud.flush()); } catch (e) { } } },
+  /* Realtime do Supabase (instantâneo). Requer supabase-js carregado e Realtime habilitado na tabela erp_state. */
+  startRealtime(tries) {
+    if (this._rt || !this.configured()) return;
+    if (typeof window === 'undefined' || !window.supabase || !window.supabase.createClient) {
+      if ((tries || 0) < 20) return void setTimeout(() => Cloud.startRealtime((tries || 0) + 1), 700); // aguarda o SDK carregar
+      return; // SDK indisponível → segue com polling
+    }
+    try {
+      const c = this.cfg();
+      this._sb = window.supabase.createClient(c.url, c.key);
+      this._rt = this._sb.channel('erp_state_rt')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'erp_state' }, () => { Cloud.checkRemote(); })
+        .subscribe((st) => { if (st === 'SUBSCRIBED') { Cloud.realtimeOn = true; Cloud.log('realtime', true, 'conectado'); Cloud.flush(); Cloud.showState(); } });
+    } catch (e) { console.warn('realtime indisponível, usando polling', e); this.log('realtime', false, String(e && e.message || e)); }
+  },
+  start() {
+    if (!this.configured()) return; this.stop();
+    this.startRealtime();
+    this.syncTimer = setInterval(() => this.checkRemote(), this.realtimeOn ? 8000 : 3000); // polling como rede de segurança
+    // reenvio automático da fila quando a internet voltar
+    if (!this._flushBound) {
+      this._flushBound = true;
+      try {
+        window.addEventListener('online', () => { Cloud._offline = false; Cloud.checkRemote(); Cloud.flush(); });
+        window.addEventListener('offline', () => { Cloud._offline = true; Cloud.showState(); });
+        window.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') Cloud.flush(); else Cloud.checkRemote(); });
+        window.addEventListener('beforeunload', () => Cloud.flush());
+      } catch (e) { }
+    }
+  },
   stop() { clearInterval(this.syncTimer); this.syncTimer = null; },
   async test() { try { await this.pull(); return true; } catch (e) { return false; } }
 };
@@ -4648,8 +4704,12 @@ Modules.cfgDiagnostico = function () {
           <div class="mini-stat"><span>Versão de sincronização (rev)</span><b>${sync.rev}</b></div>
           <div class="mini-stat"><span>Alterações pendentes de envio</span><b style="color:${sync.dirty ? 'var(--amber)' : 'var(--green)'}">${sync.dirty ? 'Sim' : 'Não'}</b></div>
           <div class="mini-stat"><span>Último backup automático</span><b>${bk.at ? Fmt.datetime(bk.at) : '—'}</b></div>
-          <div class="muted" style="font-size:12px;margin-top:8px">Para conferir a fundo: abra o Supabase → Table Editor → <b>erp_state</b> e veja a coluna <b>updated_at</b> (quando a nuvem foi gravada pela última vez).</div></div>
-      </div>`,
+          <div class="mini-stat"><span>Realtime ativo</span><b style="color:${(typeof Cloud !== 'undefined' && Cloud.realtimeOn) ? 'var(--green)' : 'var(--txt-2)'}">${(typeof Cloud !== 'undefined' && Cloud.realtimeOn) ? 'Sim' : 'Não (usando verificação a cada 3s)'}</b></div>
+          <div class="muted" style="font-size:12px;margin-top:8px">Para conferir a fundo: abra o Supabase → Table Editor → <b>erp_state</b> e veja a coluna <b>updated_at</b>.</div></div>
+      </div>
+      ${(typeof Cloud !== 'undefined' && Cloud.syncLog) ? `<div class="card" style="margin-top:14px"><div class="section-title">🧾 Log de sincronização (últimas operações)</div>
+        <div class="table-wrap" style="max-height:220px;overflow:auto"><table><thead><tr><th>Data/Hora</th><th>Usuário</th><th>Operação</th><th>Resultado</th></tr></thead>
+        <tbody>${(Cloud.syncLog().slice(0, 30).map(l => `<tr><td>${Fmt.datetime(l.t)}</td><td>${esc(l.u)}</td><td>${esc(l.op)}${l.msg ? ' <span class="muted">· ' + esc(l.msg) + '</span>' : ''}</td><td>${l.ok ? '<span class="badge b-green">OK</span>' : '<span class="badge b-red">Erro</span>'}</td></tr>`).join('')) || '<tr><td colspan="4" class="muted" style="text-align:center;padding:20px">Sem registros ainda.</td></tr>'}</tbody></table></div></div>` : ''}`,
     foot: `<button class="btn-ghost" onclick="Modal.close()">Fechar</button><button class="btn-primary" onclick="Modules.cfgBackupDownload()">⬇️ Baixar cópia agora</button>`
   });
 };
