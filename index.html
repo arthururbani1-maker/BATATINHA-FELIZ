@@ -545,7 +545,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 3.9 · insights inteligentes</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.0.1 · recuperação por mesclagem</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -607,21 +607,52 @@ const DB = (function () {
   }
   function persist() { localStorage.setItem(KEY, JSON.stringify(state)); } // pode lançar se armazenamento cheio/bloqueado → propaga p/ quem chamou
   function save() { persist(); if (typeof Cloud !== 'undefined' && Cloud.afterLocalSave) Cloud.afterLocalSave(); }
+  // Guarda até 2 pontos de backup (rotativos) do estado ANTES de qualquer sobrescrita
+  function snapshotBackup() {
+    try {
+      const cur = localStorage.getItem(KEY); if (!cur) return;
+      if (cur === localStorage.getItem('rg_backup')) return; // não duplica backup idêntico
+      const prev = localStorage.getItem('rg_backup'), prevAt = localStorage.getItem('rg_backup_at');
+      if (prev) { localStorage.setItem('rg_backup2', prev); localStorage.setItem('rg_backup2_at', prevAt || ''); }
+      localStorage.setItem('rg_backup', cur); localStorage.setItem('rg_backup_at', new Date().toISOString());
+    } catch (e) { }
+  }
   function importState(obj) {
     if (!obj) return;
-    // guarda backup do estado atual ANTES de sobrescrever (rede de segurança)
-    try { const cur = localStorage.getItem(KEY); if (cur) { localStorage.setItem('rg_backup', cur); localStorage.setItem('rg_backup_at', new Date().toISOString()); } } catch (e) { }
+    snapshotBackup();
     state = obj; normalize(); persist(); // garante todas as coleções (mesmo as novas vindas da nuvem)
   }
-  function restoreBackup() {
+  // Restaura MESCLANDO (aditivo): só adiciona registros que faltam, nunca apaga os atuais
+  function restoreBackup(slot) {
     try {
-      const b = localStorage.getItem('rg_backup'); if (!b) return false;
-      state = JSON.parse(b); normalize(); persist();
-      if (typeof Cloud !== 'undefined' && Cloud.markDirty) Cloud.markDirty(); // reenviar o backup restaurado
-      return true;
-    } catch (e) { return false; }
+      const b = localStorage.getItem(slot === 2 ? 'rg_backup2' : 'rg_backup'); if (!b) return { ok: false };
+      const obj = JSON.parse(b); const res = mergeCollections(obj, false);
+      if (typeof Cloud !== 'undefined' && Cloud.markDirty) Cloud.markDirty();
+      return { ok: true, added: res.added };
+    } catch (e) { return { ok: false }; }
   }
-  function backupInfo() { return { at: localStorage.getItem('rg_backup_at') || null, has: !!localStorage.getItem('rg_backup') }; }
+  function backupInfo() { return { at: localStorage.getItem('rg_backup_at') || null, has: !!localStorage.getItem('rg_backup'), at2: localStorage.getItem('rg_backup2_at') || null, has2: !!localStorage.getItem('rg_backup2') }; }
+  function recordCount(obj) { const s = obj || state; let n = 0; COLLECTIONS.forEach(c => { if (Array.isArray(s[c])) n += s[c].length; }); return n; }
+  /* MESCLA (união) por id — nenhuma venda/registro é perdido, venha de onde vier.
+     preferOutro=true → em conflito de id, o registro do "outro" (remoto/arquivo) vence; senão mantém o local. */
+  function mergeCollections(other, preferOutro) {
+    if (!other) return { added: 0 };
+    snapshotBackup();
+    let added = 0;
+    COLLECTIONS.forEach(c => {
+      const loc = Array.isArray(state[c]) ? state[c] : [];
+      const rem = Array.isArray(other[c]) ? other[c] : [];
+      if (!rem.length) { state[c] = loc; return; }
+      const map = {}, order = [];
+      loc.forEach(x => { if (x && x.id != null) { if (!(x.id in map)) order.push(x.id); map[x.id] = x; } });
+      rem.forEach(x => { if (!x || x.id == null) return; if (!(x.id in map)) { map[x.id] = x; order.push(x.id); added++; } else if (preferOutro) { map[x.id] = x; } });
+      state[c] = order.map(id => map[id]);
+    });
+    normalize(); persist();
+    return { added };
+  }
+  function mergeRemote(remote, remoteRev) { return mergeCollections(remote, (remoteRev || 0) > (parseInt(localStorage.getItem('rg_rev') || '0', 10))); }
+  function mergeImport(obj) { const r = mergeCollections(obj, false); if (typeof Cloud !== 'undefined' && Cloud.markDirty) Cloud.markDirty(); return r; }
   function all(c) { return state[c] || []; }
   function get(c, id) { return (state[c] || []).find(x => x.id === id); }
   function uid(p) { return p + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
@@ -843,7 +874,7 @@ const DB = (function () {
     return m.sort((a, b) => new Date(b.data) - new Date(a.data));
   }
 
-  return { load, save, all, get, insert, update, remove, logMov, logFin, reset, exportJSON, importState, restoreBackup, backupInfo, uid, state: () => state };
+  return { load, save, all, get, insert, update, remove, logMov, logFin, reset, exportJSON, importState, restoreBackup, backupInfo, recordCount, mergeRemote, mergeImport, uid, state: () => state };
 })();
 
 </script>
@@ -923,13 +954,16 @@ const Cloud = {
   },
   async checkRemote() {
     if (!this.configured() || this.pushing) return;
-    if (this.isDirty()) { this.doPush(); return; } // há mudanças locais não enviadas → enviar; NUNCA sobrescrever
+    if (this.isDirty()) { this.doPush(); return; } // há mudanças locais não enviadas → enviar primeiro
     try {
       const row = await this.pull();
-      if (row && row.rev > this.rev()) {
-        DB.importState(row.data); this.setRev(row.rev);
-        if (typeof App !== 'undefined' && App.refresh) App.refresh();
-        this.status('Nuvem · atualizado agora', true);
+      if (row && row.data) {
+        const remoteCount = DB.recordCount(row.data);
+        const res = DB.mergeRemote(row.data, row.rev || 0);       // MESCLA (união) — nunca perde registros
+        this.setRev(Math.max(this.rev(), row.rev || 0));
+        if (res.added > 0 && typeof App !== 'undefined' && App.refresh) App.refresh();
+        if (DB.recordCount() > remoteCount) { this.markDirty(); this.doPush(); } // a nuvem estava sem registros que temos → reenviar a união
+        this.status(res.added > 0 ? 'Nuvem · atualizado agora' : 'Nuvem · sincronizado', true);
       } else this.status('Nuvem · sincronizado', true);
     } catch (e) { this.status('Sem conexão · local', false); }
   },
@@ -938,25 +972,19 @@ const Cloud = {
     this.status('Conectando…', true);
     try {
       const row = await this.pull();
-      const remoteRev = (row && row.rev) || 0;
-      if (this.isDirty()) {
-        // Há vendas/alterações locais ainda NÃO enviadas → o local é a verdade. Enviar para a nuvem, jamais sobrescrever.
-        const r = Math.max(this.rev(), remoteRev) + 1;
+      if (row && row.data) {
+        // MESCLA os dois lados (nuvem + este aparelho) — a união vai para a nuvem, ninguém perde venda
+        DB.mergeRemote(row.data, row.rev || 0);
+        const r = Math.max(this.rev(), row.rev || 0) + 1;
         await this.push(DB.state(), r); this.setRev(r); this.clearDirty();
-        this.status('Nuvem · sincronizado (enviado do aparelho)', true);
-      } else if (row && row.data && remoteRev > this.rev()) {
-        // Local limpo e nuvem mais nova (outro aparelho) → adotar a nuvem
-        DB.importState(row.data); this.setRev(remoteRev);
+        if (typeof App !== 'undefined' && App.refresh) App.refresh();
         this.status('Nuvem · sincronizado', true);
-      } else if (row && row.data) {
-        this.setRev(remoteRev); this.status('Nuvem · sincronizado', true);
       } else {
-        // Nuvem vazia → subir o que existe no aparelho
         const r = this.rev() + 1; await this.push(DB.state(), r); this.setRev(r); this.clearDirty();
         this.status('Nuvem · sincronizado', true);
       }
     } catch (e) { this.status('Sem conexão · salvo no aparelho', false); }
-    this.ready = true; // a partir daqui, alterações do usuário passam a marcar "dirty"
+    this.ready = true;
   },
   /* Envia imediatamente ao sair/ocultar a página, se houver algo pendente (best-effort). */
   flush() { if (this.configured() && this.isDirty()) this.doPush(); },
@@ -4556,9 +4584,13 @@ Modules.cfgSegurancaCard = function () {
     <p class="muted" style="line-height:1.6;margin-bottom:12px">Seus dados ficam salvos no aparelho (navegador) e espelhados na nuvem. Aqui você pode <b>baixar uma cópia de segurança</b> ou <b>restaurar o último backup automático</b> (criado sempre que a nuvem atualiza os dados).</p>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <button class="btn-primary" onclick="Modules.cfgBackupDownload()">⬇️ Baixar cópia de segurança (.json)</button>
-      <button class="btn-ghost" onclick="Modules.cfgRestoreBackup()" ${bk.has ? '' : 'disabled title="Nenhum backup automático ainda"'}>♻️ Restaurar último backup${bk.at ? ' (' + Fmt.datetime(bk.at) + ')' : ''}</button>
+      <button class="btn-ghost" onclick="document.getElementById('cfg-import-file').click()">📥 Importar cópia (.json) e mesclar</button>
+      <input type="file" id="cfg-import-file" accept="application/json,.json" style="display:none" onchange="Modules.cfgImportFile(this)">
+      <button class="btn-ghost" onclick="Modules.cfgRestoreBackup(1)" ${bk.has ? '' : 'disabled title="Nenhum backup automático ainda"'}>♻️ Recuperar backup 1${bk.at ? ' (' + Fmt.datetime(bk.at) + ')' : ''}</button>
+      ${bk.has2 ? `<button class="btn-ghost" onclick="Modules.cfgRestoreBackup(2)">♻️ Recuperar backup 2${bk.at2 ? ' (' + Fmt.datetime(bk.at2) + ')' : ''}</button>` : ''}
       <button class="btn-ghost" onclick="Modules.cfgDiagnostico()">🔎 Diagnóstico de dados</button>
     </div>
+    <p class="muted" style="font-size:12px;margin-top:8px">♻️ <b>Recuperar backup</b> e 📥 <b>Importar cópia</b> agora <b>mesclam</b> (só somam vendas/registros que faltam, sem apagar nada). Ideal para recuperar dados de outro PC ou de antes de uma perda.</p>
     <p class="muted" style="font-size:12px;margin-top:10px">Dica: baixe uma cópia periodicamente. Se algum dia notar dados sumindo, restaure o backup aqui antes de qualquer outra coisa.</p>
   </div>
   <div class="card" style="border:1px solid rgba(245,69,92,.45)">
@@ -4631,12 +4663,29 @@ Modules.cfgBackupDownload = function () {
     Toast.ok('Cópia de segurança baixada.');
   } catch (e) { Toast.err('Falha ao gerar o backup.'); }
 };
-Modules.cfgRestoreBackup = function () {
+Modules.cfgImportFile = function (input) {
   if (!App.isAdmin()) return Toast.err('Apenas administradores.');
-  Modal.confirm('Restaurar o último backup automático? O estado atual será substituído pelo backup salvo. Recomendado apenas se você perdeu dados.', () => {
-    if (DB.restoreBackup && DB.restoreBackup()) { Toast.ok('Backup restaurado! Recarregando...'); setTimeout(() => location.reload(), 800); }
-    else Toast.err('Não há backup disponível para restaurar.');
-  }, 'Restaurar backup');
+  const file = input.files && input.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function () {
+    let obj; try { obj = JSON.parse(reader.result); } catch (e) { return Toast.err('Arquivo inválido (não é um backup .json válido).'); }
+    if (!obj || (!obj.vendas && !obj.produtos)) return Toast.err('Este arquivo não parece um backup do Rico Games.');
+    const antes = DB.recordCount();
+    Modal.confirm('Importar e <b>mesclar</b> este arquivo? As vendas e registros que faltam serão adicionados (nada é apagado). Este aparelho tem ' + antes + ' registros hoje.', () => {
+      const res = DB.mergeImport(obj);
+      Toast.ok(res.added + ' registro(s) recuperado(s) e mesclado(s)! Sincronizando…');
+      Modal.close(); setTimeout(() => location.reload(), 900);
+    }, 'Importar e mesclar');
+  };
+  reader.readAsText(file); input.value = '';
+};
+Modules.cfgRestoreBackup = function (slot) {
+  if (!App.isAdmin()) return Toast.err('Apenas administradores.');
+  Modal.confirm('Recuperar o backup ' + (slot === 2 ? '2' : '1') + '? Ele será <b>mesclado</b> com os dados atuais — só adiciona vendas/registros que faltam, <b>nada é apagado</b>.', () => {
+    const res = (DB.restoreBackup && DB.restoreBackup(slot)) || { ok: false };
+    if (res.ok) { Toast.ok(res.added + ' registro(s) recuperado(s)! Recarregando...'); setTimeout(() => location.reload(), 900); }
+    else Toast.err('Não há backup disponível nesse ponto.');
+  }, 'Recuperar e mesclar');
 };
 Modules.cfgResetData = function () {
   if (!App.isAdmin()) return Toast.err('Apenas administradores podem resetar o sistema.');
