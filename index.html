@@ -545,7 +545,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.1 · sincronização em tempo real</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.3.1 · modo econômico</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -603,7 +603,7 @@ const DB = (function () {
   function load() {
     try { state = JSON.parse(localStorage.getItem(KEY)); } catch (e) { state = null; }
     if (!state || !state.produtos) { state = seed(); save(); }
-    normalize();
+    normalize(); bumpVerFromState();
     return state;
   }
   function persist() { localStorage.setItem(KEY, JSON.stringify(state)); } // pode lançar se armazenamento cheio/bloqueado → propaga p/ quem chamou
@@ -621,7 +621,7 @@ const DB = (function () {
   function importState(obj) {
     if (!obj) return;
     snapshotBackup();
-    state = obj; normalize(); persist(); // garante todas as coleções (mesmo as novas vindas da nuvem)
+    state = obj; normalize(); bumpVerFromState(); persist(); // garante todas as coleções (mesmo as novas vindas da nuvem)
   }
   // Restaura MESCLANDO (aditivo): só adiciona registros que faltam, nunca apaga os atuais
   function restoreBackup(slot) {
@@ -651,12 +651,13 @@ const DB = (function () {
         if (!(x.id in map)) { map[x.id] = x; order.push(x.id); added++; return; }
         // conflito de id: vence o registro MAIS NOVO (versão maior). Antigo nunca sobrescreve novo.
         const cur = map[x.id], cv = cur.__ver || 0, xv = x.__ver || 0;
+        seenVer(xv);
         if (xv > cv) map[x.id] = x;
         else if (xv === cv && preferOutro) map[x.id] = x;
       });
       state[c] = order.map(id => map[id]);
     });
-    normalize(); persist();
+    normalize(); bumpVerFromState(); persist();
     return { added };
   }
   function mergeRemote(remote, remoteRev) { return mergeCollections(remote, (remoteRev || 0) > (parseInt(localStorage.getItem('rg_rev') || '0', 10))); }
@@ -669,16 +670,21 @@ const DB = (function () {
     if (!Array.isArray(state[c])) state[c] = [];
     if (!obj.id) obj.id = uid(c.slice(0, 3));
     obj.criadoEm = obj.criadoEm || new Date().toISOString();
-    obj.__ver = ver();                 // versão do registro (controle de concorrência)
+    obj.__ver = nextVer(0);            // versão do registro (relógio lógico)
     state[c].push(obj); save(); return obj;
   }
   function update(c, id, patch) {
     if (!Array.isArray(state[c])) state[c] = [];
     const i = state[c].findIndex(x => x.id === id);
-    if (i >= 0) { state[c][i] = Object.assign({}, state[c][i], patch, { __ver: ver() }); save(); return state[c][i]; }
+    // versão SEMPRE maior que a versão atual do registro (vence conflito mesmo com relógios diferentes entre PCs)
+    if (i >= 0) { state[c][i] = Object.assign({}, state[c][i], patch, { __ver: nextVer(state[c][i].__ver) }); save(); return state[c][i]; }
   }
+  /* Relógio lógico (Lamport): imune a diferença de horário entre computadores.
+     A nova versão é sempre maior que tudo que este aparelho já viu e maior que a versão do próprio registro. */
   let _verLast = 0;
-  function ver() { let v = Date.now(); if (v <= _verLast) v = _verLast + 1; _verLast = v; return v; } // monotônico
+  function nextVer(base) { _verLast = Math.max(_verLast, Date.now(), base || 0) + 1; return _verLast; }
+  function seenVer(v) { if (v && v > _verLast) _verLast = v; }
+  function bumpVerFromState() { COLLECTIONS.forEach(c => { const arr = state[c]; if (Array.isArray(arr)) for (let i = 0; i < arr.length; i++) { const x = arr[i]; if (x && x.__ver && x.__ver > _verLast) _verLast = x.__ver; } }); }
   function remove(c, id) { state[c] = (state[c] || []).filter(x => x.id !== id); save(); }
 
   /* ---- Movimentações: registro central de rastreabilidade ---- */
@@ -930,9 +936,15 @@ const Cloud = {
   /* Estado visual em 3 níveis: Sincronizado · Sincronizando · Offline */
   showState() {
     if (!this.configured()) return this.status('Offline · salvo no aparelho', null);
+    if (this._offline) return this.status('Sem conexão com a nuvem' + (this.isDirty() ? ' · alterações na fila' : ''), false);
     if (this.pushing || this.isDirty()) return this.status('Sincronizando…', true);
-    if (this._offline) return this.status('Offline · alterações na fila', false);
     return this.status('Sincronizado' + (this.realtimeOn ? ' · tempo real' : ''), true);
+  },
+  /* Teste de conexão detalhado — retorna sucesso ou a mensagem de erro exata */
+  async testDetailed() {
+    if (!this.configured()) return { ok: false, msg: 'Nuvem não configurada.' };
+    try { await this.pull(); this._offline = false; this.showState(); this.log('teste', true, 'conexão OK'); return { ok: true }; }
+    catch (e) { this._offline = true; this.showState(); const m = String(e && e.message || e); this.log('teste', false, m); return { ok: false, msg: m }; }
   },
   /* Log interno de sincronização (diagnóstico) */
   log(op, ok, msg) {
@@ -950,6 +962,14 @@ const Cloud = {
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const rows = await r.json();
     return rows[0] || null;
+  },
+  /* Consulta SÓ o número da versão (bytes) — evita baixar o banco inteiro à toa (economiza egress) */
+  async pullRev() {
+    const c = this.cfg();
+    const r = await fetch(c.url + '/rest/v1/erp_state?id=eq.main&select=rev', { headers: this.headers() });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const rows = await r.json();
+    return rows[0] ? (rows[0].rev || 0) : -1;
   },
   async push(state, rev) {
     const c = this.cfg();
@@ -984,15 +1004,19 @@ const Cloud = {
     if (!this.configured() || this.pushing) return;
     if (this.isDirty()) { this.doPush(); return; } // há mudanças locais não enviadas → enviar primeiro
     try {
-      const row = await this.pull();
-      if (row && row.data) {
-        const remoteCount = DB.recordCount(row.data);
-        const res = DB.mergeRemote(row.data, row.rev || 0);       // MESCLA (união, mais-novo-vence) — nunca perde registros
-        this.setRev(Math.max(this.rev(), row.rev || 0)); this._offline = false;
-        if (res.added > 0) { this.log('pull', true, res.added + ' registros recebidos'); if (typeof App !== 'undefined' && App.refresh) App.refresh(); }
-        if (DB.recordCount() > remoteCount) { this.markDirty(); this.doPush(); } // a nuvem estava sem registros que temos → reenviar a união
-        this.showState();
-      } else this.showState();
+      const remoteRev = await this.pullRev();          // consulta minúscula — economiza transferência (egress)
+      this._offline = false;
+      if (remoteRev > this.rev()) {                     // só baixa os dados QUANDO REALMENTE mudou
+        const row = await this.pull();
+        if (row && row.data) {
+          const remoteCount = DB.recordCount(row.data);
+          const res = DB.mergeRemote(row.data, row.rev || 0);   // MESCLA (união, mais-novo-vence)
+          this.setRev(Math.max(this.rev(), row.rev || 0));
+          if (res.added > 0) { this.log('pull', true, res.added + ' registros recebidos'); if (typeof App !== 'undefined' && App.refresh) App.refresh(); }
+          if (DB.recordCount() > remoteCount) { this.markDirty(); this.doPush(); }
+        }
+      }
+      this.showState();
     } catch (e) { this._offline = true; this.log('pull', false, String(e && e.message || e)); this.showState(); }
   },
   async initialSync() {
@@ -1001,15 +1025,18 @@ const Cloud = {
     try {
       const row = await this.pull();
       if (row && row.data) {
-        // MESCLA os dois lados (nuvem + este aparelho) — a união vai para a nuvem, ninguém perde venda
+        // MESCLA os dois lados; só reenvia se este aparelho tiver algo que a nuvem não tem (evita transferência à toa)
+        const remoteCount = DB.recordCount(row.data);
         DB.mergeRemote(row.data, row.rev || 0);
-        const r = Math.max(this.rev(), row.rev || 0) + 1;
-        await this.push(DB.state(), r); this.setRev(r); this.clearDirty();
+        this.setRev(Math.max(this.rev(), row.rev || 0));
+        if (DB.recordCount() > remoteCount || this.isDirty()) {
+          const r = this.rev() + 1; await this.push(DB.state(), r); this.setRev(r); this.clearDirty();
+        }
         if (typeof App !== 'undefined' && App.refresh) App.refresh();
-        this.status('Nuvem · sincronizado', true);
+        this._offline = false; this.showState();
       } else {
         const r = this.rev() + 1; await this.push(DB.state(), r); this.setRev(r); this.clearDirty();
-        this.status('Nuvem · sincronizado', true);
+        this._offline = false; this.showState();
       }
     } catch (e) { this.status('Sem conexão · salvo no aparelho', false); }
     this.ready = true;
@@ -1034,7 +1061,10 @@ const Cloud = {
   start() {
     if (!this.configured()) return; this.stop();
     this.startRealtime();
-    this.syncTimer = setInterval(() => this.checkRemote(), this.realtimeOn ? 8000 : 3000); // polling como rede de segurança
+    // MODO ECONÔMICO: verificação leve (só a versão, ~50 bytes). Realtime cuida do instantâneo (não gasta egress).
+    // Sem realtime, sincroniza a cada 45s — mais que suficiente para a loja e longe do limite.
+    this._pollMs = 45000;
+    this.syncTimer = setInterval(() => this.checkRemote(), this._pollMs);
     // reenvio automático da fila quando a internet voltar
     if (!this._flushBound) {
       this._flushBound = true;
@@ -4705,12 +4735,22 @@ Modules.cfgDiagnostico = function () {
           <div class="mini-stat"><span>Alterações pendentes de envio</span><b style="color:${sync.dirty ? 'var(--amber)' : 'var(--green)'}">${sync.dirty ? 'Sim' : 'Não'}</b></div>
           <div class="mini-stat"><span>Último backup automático</span><b>${bk.at ? Fmt.datetime(bk.at) : '—'}</b></div>
           <div class="mini-stat"><span>Realtime ativo</span><b style="color:${(typeof Cloud !== 'undefined' && Cloud.realtimeOn) ? 'var(--green)' : 'var(--txt-2)'}">${(typeof Cloud !== 'undefined' && Cloud.realtimeOn) ? 'Sim' : 'Não (usando verificação a cada 3s)'}</b></div>
+          <div class="mini-stat"><span>Situação da conexão</span><b style="color:${(typeof Cloud !== 'undefined' && Cloud._offline) ? 'var(--red)' : 'var(--green)'}">${(typeof Cloud !== 'undefined' && Cloud._offline) ? 'Sem conexão' : 'Conectado'}</b></div>
+          <div style="margin-top:10px"><button class="btn-ghost btn-sm" onclick="Modules.cfgTestarNuvem()">🔌 Testar conexão com a nuvem</button></div>
           <div class="muted" style="font-size:12px;margin-top:8px">Para conferir a fundo: abra o Supabase → Table Editor → <b>erp_state</b> e veja a coluna <b>updated_at</b>.</div></div>
       </div>
       ${(typeof Cloud !== 'undefined' && Cloud.syncLog) ? `<div class="card" style="margin-top:14px"><div class="section-title">🧾 Log de sincronização (últimas operações)</div>
         <div class="table-wrap" style="max-height:220px;overflow:auto"><table><thead><tr><th>Data/Hora</th><th>Usuário</th><th>Operação</th><th>Resultado</th></tr></thead>
         <tbody>${(Cloud.syncLog().slice(0, 30).map(l => `<tr><td>${Fmt.datetime(l.t)}</td><td>${esc(l.u)}</td><td>${esc(l.op)}${l.msg ? ' <span class="muted">· ' + esc(l.msg) + '</span>' : ''}</td><td>${l.ok ? '<span class="badge b-green">OK</span>' : '<span class="badge b-red">Erro</span>'}</td></tr>`).join('')) || '<tr><td colspan="4" class="muted" style="text-align:center;padding:20px">Sem registros ainda.</td></tr>'}</tbody></table></div></div>` : ''}`,
     foot: `<button class="btn-ghost" onclick="Modal.close()">Fechar</button><button class="btn-primary" onclick="Modules.cfgBackupDownload()">⬇️ Baixar cópia agora</button>`
+  });
+};
+Modules.cfgTestarNuvem = function () {
+  if (typeof Cloud === 'undefined' || !Cloud.testDetailed) return Toast.err('Sincronização indisponível.');
+  Toast.warn('Testando conexão com o Supabase…');
+  Cloud.testDetailed().then(res => {
+    if (res.ok) Toast.ok('✅ Conexão com a nuvem OK! As alterações na fila serão enviadas agora.');
+    else Toast.err('❌ Falha ao conectar: ' + (res.msg || 'erro desconhecido') + '. Verifique a internet e se o projeto do Supabase não está pausado.');
   });
 };
 Modules.cfgBackupDownload = function () {
