@@ -486,6 +486,16 @@ td .muted,.muted{color:var(--txt-3)}
 .seg-ind-v{font-size:13.5px;font-weight:700;margin-top:3px}
 .seg-ind-s{font-size:11.5px;color:var(--txt-2);margin-top:1px}
 
+/* ===== Segmento: Investimento x Retorno ===== */
+.seg-roi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.seg-roi-box{background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+.seg-roi-box.out{border-left:4px solid var(--red)} .seg-roi-box.in{border-left:4px solid var(--green)}
+.seg-roi-l{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--txt-2)}
+.seg-roi-v{font-size:19px;font-weight:800;margin-top:3px}
+.seg-roi-s{font-size:11.5px;color:var(--txt-2);margin-top:2px}
+.seg-roi-bal{margin-top:12px;padding:11px 14px;border-radius:10px;font-size:14px;background:var(--bg-2);border:1px solid var(--line)}
+.seg-roi-bal.pos{border-left:4px solid var(--green)} .seg-roi-bal.neg{border-left:4px solid var(--red)}
+
 </style>
   <script>
     /* Aplica o tema o quanto antes para evitar "flash" ao carregar */
@@ -557,7 +567,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.4 · análise por segmento</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.5.1 · relatório à prova de erro</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -5657,8 +5667,13 @@ Modules.biSetTab = function (t) {
 Modules.biRender = function () {
   const b = document.getElementById('bi-body'); if (!b) return;
   const t = this.biState.tab;
-  b.innerHTML = ({ geral: this.biGeral, insights: this.biInsights, segmentos: this.biSegmentos, pagamentos: this.biPagamentos, prevendas: this.biPrevendas, cross: this.biCross, rankings: this.biRankings, pesquisa: this.biPesquisa, categorias: this.biCategorias, tendencias: this.biTendencias, rentab: this.biRentab, estoque: this.biEstoque })[t].call(this);
-  if (t === 'pesquisa') this.biCompara();
+  try {
+    b.innerHTML = ({ geral: this.biGeral, insights: this.biInsights, segmentos: this.biSegmentos, pagamentos: this.biPagamentos, prevendas: this.biPrevendas, cross: this.biCross, rankings: this.biRankings, pesquisa: this.biPesquisa, categorias: this.biCategorias, tendencias: this.biTendencias, rentab: this.biRentab, estoque: this.biEstoque })[t].call(this);
+    if (t === 'pesquisa') this.biCompara();
+  } catch (e) {
+    console.error('Erro ao gerar relatório', t, e);
+    b.innerHTML = '<div class="empty-state"><div class="big">⚠️</div>Não foi possível gerar este relatório.<br><small style="color:var(--txt-3)">' + esc(String(e && e.message || e)) + '</small><br><button class="btn-ghost btn-sm" style="margin-top:12px" onclick="Modules.biSetTab(\'geral\')">← Voltar à Visão geral</button></div>';
+  }
 };
 
 /* ---- helpers de UI ---- */
@@ -6668,6 +6683,23 @@ Modules.segData = function (seg, ctx) {
     nVendas: Object.keys(vendaIds).length, ticket: Object.keys(vendaIds).length ? faturamento / Object.keys(vendaIds).length : 0,
     giro: estoqueQtd ? qtdVend / estoqueQtd : qtdVend
   };
+  // ---- Investimento × Retorno no período (dinheiro que saiu para adquirir × que voltou vendendo) ----
+  let comprado = 0, unCompradas = 0;
+  const inRange = d => { const t = new Date(d); return t >= ctx.r.start && t <= ctx.r.end; };
+  DB.all('compras').forEach(c => { if (!inRange(c.data)) return; (c.itens || []).forEach(i => { const p = skuMap[i.sku] || prods.find(pp => pp.nome === i.nome); if (p && skuMap[p.sku]) { comprado += (i.qtd || 0) * (i.custo || 0); unCompradas += (i.qtd || 0); } }); });
+  (ctx.vendas || []).forEach(v => (v.usados || []).forEach(u => { const p = u.produtoId ? DB.get('produtos', u.produtoId) : null; if (p && skuMap[p.sku]) { comprado += (u.valor || 0); unCompradas += 1; } }));
+  prods.forEach(p => (p.entradas || []).forEach(e => { if (!inRange(e.data)) return; comprado += (e.custoUnit || 0) * (e.qtd || 0); unCompradas += (e.qtd || 0); }));
+  const fin = {
+    comprado, unCompradas,
+    vendido: rows.reduce((a, x) => a + x.faturamento, 0),
+    custoVendido: rows.reduce((a, x) => a + x.custoVend, 0),
+    lucroLiq: rows.reduce((a, x) => a + x.lucroLiq, 0),
+    estoqueAtual: invest
+  };
+  fin.roiVendido = fin.custoVendido ? fin.lucroLiq / fin.custoVendido * 100 : 0;   // retorno sobre o que foi vendido
+  fin.caixaSegmento = fin.vendido - fin.comprado;                                  // entrou − saiu no período
+  fin.recuperadoPct = fin.comprado ? fin.vendido / fin.comprado * 100 : 0;
+
   // indicadores
   const vend = rows.filter(x => x.qtdVend > 0);
   const ind = {
@@ -6678,7 +6710,7 @@ Modules.segData = function (seg, ctx) {
     parado: rows.filter(x => x.estoque > 0 && x.dias != null).sort((a, b) => b.dias - a.dias)[0],
     maiorGiro: vend.slice().sort((a, b) => b.giro - a.giro)[0]
   };
-  return { prods, rows, T, ind, skuMap };
+  return { prods, rows, T, ind, fin, skuMap };
 };
 
 Modules.segLabel = function (seg) {
@@ -6735,6 +6767,19 @@ Modules.biSegmentos = function () {
     ${kpi('Lucro líquido', Fmt.brl(T.lucroLiq), 'bruto ' + Fmt.brl(T.lucroBruto) + ' · margem ' + Fmt.pct(T.margemVenda), '💎', 'purple')}
   </div>
 
+  ${App.canFinance() ? `<div class="card seg-roi" style="margin-bottom:16px"><div class="section-title">💰 Investimento × Retorno <span class="muted" style="font-weight:500">· ${esc(per)}</span></div>
+    <div class="seg-roi-grid">
+      <div class="seg-roi-box out"><div class="seg-roi-l">Investido (comprado no período)</div><div class="seg-roi-v">${Fmt.brl(D.fin.comprado)}</div><div class="seg-roi-s">${D.fin.unCompradas} unidade(s) adquirida(s)</div></div>
+      <div class="seg-roi-box in"><div class="seg-roi-l">Retorno (vendido no período)</div><div class="seg-roi-v">${Fmt.brl(D.fin.vendido)}</div><div class="seg-roi-s">custo do vendido ${Fmt.brl(D.fin.custoVendido)}</div></div>
+      <div class="seg-roi-box"><div class="seg-roi-l">Lucro líquido realizado</div><div class="seg-roi-v" style="color:${D.fin.lucroLiq >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(D.fin.lucroLiq)}</div><div class="seg-roi-s">ROI sobre o vendido <b>${Fmt.pct(D.fin.roiVendido)}</b></div></div>
+      <div class="seg-roi-box"><div class="seg-roi-l">Ainda parado em estoque</div><div class="seg-roi-v">${Fmt.brl(D.fin.estoqueAtual)}</div><div class="seg-roi-s">dinheiro a recuperar</div></div>
+    </div>
+    <div class="seg-roi-bal ${D.fin.caixaSegmento >= 0 ? 'pos' : 'neg'}">
+      Balanço de caixa do segmento no período: <b>${D.fin.caixaSegmento >= 0 ? '+' : ''}${Fmt.brl(D.fin.caixaSegmento)}</b>
+      <span class="muted" style="font-weight:500">(${Fmt.brl(D.fin.vendido)} que entrou − ${Fmt.brl(D.fin.comprado)} que saiu). Você já recuperou ${Fmt.pct(D.fin.recuperadoPct)} do que investiu no período.</span>
+    </div>
+    <p class="muted" style="font-size:11.5px;margin-top:8px">Para "jogos usados": selecione categoria <b>Jogos</b> + condição <b>Usado</b> e veja quanto saiu para comprá-los e quanto voltou nas vendas. Precisa ter compras/entradas e vendas registradas no período para o cálculo ficar completo.</p>
+  </div>` : ''}
   <div class="card" style="margin-bottom:16px"><div class="section-title">🥇 Destaques do segmento</div>
     <div class="seg-inds">
       ${indCard('Mais vendido', D.ind.maisVendido, x => x.qtdVend + ' un')}
