@@ -581,8 +581,7 @@ td .muted,.muted{color:var(--txt-3)}
         <a class="nav-item" data-route="estoque"><span class="ico">📦</span> Estoque</a>
         <a class="nav-item" data-route="entrada"><span class="ico">📥</span> Entrada de Estoque</a>
         <a class="nav-item" data-route="compras"><span class="ico">🚚</span> Compras</a>
-        <a class="nav-item" data-route="fornecedores"><span class="ico">🏭</span> Fornecedores</a>
-        <a class="nav-item" data-route="usados"><span class="ico">🔍</span> Avaliação de Usados</a>
+        <a class="nav-item" data-route="usados"><span class="ico">🔄</span> Receber Usado</a>
         <a class="nav-item" data-route="trocas"><span class="ico">🔄</span> Trocas</a>
         <a class="nav-item" data-route="prevendas"><span class="ico">📋</span> Pré-venda / Reservas</a>
         <a class="nav-item" data-route="movimentacoes"><span class="ico">📜</span> Movimentações</a>
@@ -594,7 +593,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.6 · simulador comercial</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.7 · sistema enxuto</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -1546,14 +1545,7 @@ const Calc = {
   contasPagar() { return DB.all('financeiro').filter(f => f.tipo === 'saida' && f.status === 'pendente').reduce((s, f) => s + f.valor, 0); },
   contasReceber() { return DB.all('financeiro').filter(f => f.tipo === 'entrada' && f.status === 'pendente').reduce((s, f) => s + f.valor, 0); },
   estoqueUnidades() { return DB.all('produtos').reduce((s, p) => s + (p.qtd || 0), 0); },
-  estoqueValorCusto() { return DB.all('produtos').reduce((s, p) => s + (p.custoMedio || p.custo) * p.qtd, 0); },
-  estoqueBaixo() { return DB.all('produtos').filter(p => p.qtd <= p.min); },
-  produtosParados(dias) {
-    const lim = dias || 60; const now = new Date();
-    const vendidosSku = new Set();
-    this.vendasValidas().filter(v => (now - new Date(v.data)) / 86400000 <= lim).forEach(v => v.itens.forEach(i => vendidosSku.add(i.sku)));
-    return DB.all('produtos').filter(p => p.qtd > 0 && !vendidosSku.has(p.sku));
-  }
+  estoqueValorCusto() { return DB.all('produtos').reduce((s, p) => s + (p.custoMedio || p.custo) * p.qtd, 0); }
 };
 
 const Modules = {
@@ -1565,7 +1557,6 @@ const Modules = {
     const llDia = c.lucroLiquido(c.isToday.bind(c)), llMes = c.lucroLiquido(c.isThisMonth.bind(c)), llAno = c.lucroLiquido(c.isThisYear.bind(c));
     const fatMesAnt = c.faturamento(c.isPrevMonth.bind(c));
     const varMes = fatMesAnt ? ((fatMes - fatMesAnt) / fatMesAnt * 100) : 0;
-    const baixo = c.estoqueBaixo(), parados = c.produtosParados(60);
     const movs = DB.all('movimentacoes').slice(0, 8);
 
     return `
@@ -1576,21 +1567,13 @@ const Modules = {
       ${kpi('Faturamento do dia', Fmt.brl(fatDia), c.vendasValidas().filter(v => c.isToday(v.data)).length + ' vendas hoje', '💵', '')}
       ${kpi('Faturamento do mês', Fmt.brl(fatMes), `<span class="${varMes >= 0 ? 'up' : 'down'}">${varMes >= 0 ? '▲' : '▼'} ${Fmt.pct(Math.abs(varMes))} vs mês ant.</span>`, '📅', 'blue')}
       ${kpi('Lucro bruto (mês)', Fmt.brl(lbMes), 'Hoje: ' + Fmt.brl(lbDia), '📈', '')}
-      ${kpi('Lucro líquido (mês)', Fmt.brl(llMes), 'Após despesas', '💎', 'purple')}
-    </div>
-
-    <div class="grid kpis" style="margin-bottom:16px">
-      ${kpi('Lucro líquido — Dia', Fmt.brl(llDia), null, '🟢', '')}
-      ${kpi('Lucro líquido — Mês', Fmt.brl(llMes), null, '🟢', '')}
-      ${kpi('Lucro líquido — Ano', Fmt.brl(llAno), null, '🟢', '')}
       ${kpi('Valor em estoque (custo)', Fmt.brl(c.estoqueValorCusto()), c.estoqueUnidades() + ' unidades', '📦', 'blue')}
     </div>
 
     <div class="grid kpis" style="margin-bottom:20px">
-      ${kpi('Produtos em estoque', Fmt.num(DB.all('produtos').length) + ' itens', c.estoqueUnidades() + ' unidades', '🗃️', '')}
-      ${kpi('Estoque baixo', Fmt.num(baixo.length), 'Abaixo do mínimo', '⚠️', 'amber')}
-      ${kpi('Produtos parados', Fmt.num(parados.length), 'Sem venda há 60d', '🐌', 'red')}
-      <div class="card kpi amber" style="cursor:pointer" onclick="Modules.manutencaoLista()"><div class="kpi-ico">🟠</div><div class="kpi-label">Produtos em manutenção</div><div class="kpi-value">${Fmt.num(DB.all('produtos').reduce((s, p) => s + (p.manutencao || 0), 0))}</div><div class="kpi-sub">clique para ver a lista</div></div>
+      ${kpi('Lucro líquido — Dia', Fmt.brl(llDia), null, '🟢', '')}
+      ${kpi('Lucro líquido — Mês', Fmt.brl(llMes), null, '🟢', '')}
+      ${kpi('Lucro líquido — Ano', Fmt.brl(llAno), null, '🟢', '')}
       ${kpi('Contas a pagar', Fmt.brl(c.contasPagar()), 'Contas a receber: ' + Fmt.brl(c.contasReceber()), '🧾', 'red')}
     </div>
 
@@ -1600,28 +1583,11 @@ const Modules = {
         ${this.barChart14()}
       </div>
       <div class="card">
-        <div class="section-title">Estoque baixo <a onclick="App.go('estoque')">Ver estoque →</a></div>
-        ${baixo.length ? baixo.slice(0, 6).map(p => `
-          <div class="list-row"><div class="lr-ico">📦</div>
-            <div class="lr-main"><div class="lr-title">${esc(p.nome)}</div><div class="lr-sub">${p.sku} · mín. ${p.min}</div></div>
-            <span class="badge b-red">${p.qtd} un.</span></div>`).join('') : '<p class="muted" style="padding:14px 0">Tudo acima do mínimo 👍</p>'}
-      </div>
-    </div>
-
-    <div class="grid cols-2" style="margin-top:16px">
-      <div class="card">
         <div class="section-title">Últimas movimentações <a onclick="App.go('movimentacoes')">Ver todas →</a></div>
         ${movs.map(m => `
           <div class="list-row"><div class="lr-ico">${movIcon(m.tipo)}</div>
             <div class="lr-main"><div class="lr-title">${esc(m.descricao)}</div><div class="lr-sub">${Fmt.datetime(m.data)} · ${m.usuario}</div></div>
             ${m.valor ? `<span class="strong">${Fmt.brl(m.valor)}</span>` : ''}</div>`).join('')}
-      </div>
-      <div class="card">
-        <div class="section-title">Produtos parados <a onclick="App.go('relatorios')">Relatórios →</a></div>
-        ${parados.length ? parados.slice(0, 6).map(p => `
-          <div class="list-row"><div class="lr-ico">🐌</div>
-            <div class="lr-main"><div class="lr-title">${esc(p.nome)}</div><div class="lr-sub">${p.sku} · ${condBadge(p.condicao)}</div></div>
-            <span class="muted">${p.qtd} un.</span></div>`).join('') : '<p class="muted" style="padding:14px 0">Sem produtos parados 🎉</p>'}
       </div>
     </div>`;
   },
@@ -1653,7 +1619,7 @@ const Modules = {
       <input class="grow" id="est-search" placeholder="Buscar nome, SKU ou código..." oninput="Modules.renderEstoqueTable()" />
       <select id="est-cat" onchange="Modules.renderEstoqueTable()"><option value="">Todas categorias</option>${cats.map(c => `<option>${c}</option>`).join('')}</select>
       <select id="est-cond" onchange="Modules.renderEstoqueTable()"><option value="">Toda condição</option><option>novo</option><option>seminovo</option><option>usado</option></select>
-      <select id="est-status" onchange="Modules.renderEstoqueTable()"><option value="">Todo status</option><option value="disponivel">Disponível p/ venda</option><option value="manutencao">Em manutenção</option><option value="baixo">Estoque baixo</option></select>
+      <select id="est-status" onchange="Modules.renderEstoqueTable()"><option value="">Todos os produtos</option><option value="baixo">Estoque baixo</option></select>
     </div>
     <div id="est-table"></div>`;
   },
@@ -1664,16 +1630,13 @@ const Modules = {
       if (q && !(p.nome.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || (p.barcode || '').includes(q))) return false;
       if (cat && p.categoria !== cat) return false;
       if (cond && p.condicao !== cond) return false;
-      const disp = Modules.disp(p);
       if (st === 'baixo' && p.qtd > p.min) return false;
-      if (st === 'disponivel' && disp <= 0) return false;
-      if (st === 'manutencao' && !(p.manutencao > 0)) return false;
       return true;
     });
     const canEd = App.can('podeEditarProduto'), canFin = App.canFinance();
     const rows = list.map(p => {
-      const disp = Modules.disp(p), res = p.reservado || 0, man = p.manutencao || 0;
-      const dot = disp > 0 ? '🟢' : (man > 0 ? '🟠' : (res > 0 ? '🟡' : (p.status === 'manutencao' ? '🟠' : '🔴')));
+      const disp = Modules.disp(p), res = p.reservado || 0;
+      const dot = disp > 0 ? '🟢' : (res > 0 ? '🟡' : '🔴');
       return `
       <tr>
         <td><div class="strong prod-link" style="cursor:pointer;color:var(--accent,#5b8cff)" onclick="ProdHist.open('${p.id}')" title="Ver histórico do produto">${dot} ${esc(p.nome)} 🔎</div><div class="muted" style="font-size:11.5px">${p.sku}${p.serie ? ' · S/N ' + p.serie : ''}</div></td>
@@ -1682,7 +1645,6 @@ const Modules = {
         <td class="num strong">${p.qtd}<div class="muted" style="font-size:11px">mín ${p.min}</div></td>
         <td class="num ${disp <= p.min ? 'down strong' : ''}" style="${disp <= 0 ? 'color:var(--red)' : (disp <= p.min ? 'color:var(--amber)' : 'color:var(--green)')};font-weight:700">${disp}${disp <= 0 ? ' ⛔' : (disp <= p.min ? ' ⚠️' : '')}</td>
         <td class="num">${res ? '<span class="badge b-amber" title="reservado em pré-venda">' + res + '</span>' : '<span class="muted">0</span>'}</td>
-        <td class="num">${man ? '<span class="badge b-amber" style="background:#f9731620;color:#f97316" title="em manutenção">🟠 ' + man + '</span>' : '<span class="muted">0</span>'}</td>
         ${canFin ? `<td class="num">${Fmt.brl(p.custoMedio || p.custo)}</td>` : ''}
         <td class="num strong">${Fmt.brl(p.preco)}</td>
         ${canFin ? `<td class="num"><span class="badge b-green">${Fmt.pct((p.preco - (p.custoMedio || p.custo)) / p.preco * 100)}</span></td>` : ''}
@@ -1691,9 +1653,9 @@ const Modules = {
       </tr>`;
     }).join('');
     document.getElementById('est-table').innerHTML = `<div class="table-wrap"><table>
-      <thead><tr><th>Produto</th><th>Categoria</th><th>Condição</th><th class="num">Estoque total</th><th class="num">Disponível</th><th class="num">Reservado</th><th class="num">Manutenção</th>${canFin ? '<th class="num">Custo méd.</th>' : ''}<th class="num">Preço</th>${canFin ? '<th class="num">Margem</th>' : ''}<th>Local</th>${canEd ? '<th></th>' : ''}</tr></thead>
+      <thead><tr><th>Produto</th><th>Categoria</th><th>Condição</th><th class="num">Estoque total</th><th class="num">Disponível</th><th class="num">Reservado</th>${canFin ? '<th class="num">Custo méd.</th>' : ''}<th class="num">Preço</th>${canFin ? '<th class="num">Margem</th>' : ''}<th>Local</th>${canEd ? '<th></th>' : ''}</tr></thead>
       <tbody>${rows || '<tr><td colspan="12" class="muted" style="text-align:center;padding:30px">Nenhum produto encontrado.</td></tr>'}</tbody></table></div>
-      <div class="muted" style="font-size:12px;margin-top:8px">🟢 Disponível · 🟡 Reservado · 🟠 Em manutenção · 🔴 Sem disponível. Disponível = Estoque total − Reservado − Manutenção.</div>`;
+      <div class="muted" style="font-size:12px;margin-top:8px">🟢 Disponível · 🟡 Reservado (pré-venda) · 🔴 Sem disponível. Disponível = Estoque total − Reservado.</div>`;
   },
   produtoForm(id) {
     const p = id ? DB.get('produtos', id) : {};
@@ -1714,42 +1676,11 @@ const Modules = {
         <div class="field"><label>Preço de venda (R$)</label><input id="p-preco" type="text" inputmode="decimal" placeholder="ex: 1.999,90" value="${p.preco != null ? String(p.preco).replace('.', ',') : ''}"></div>
         <div class="field"><label>Nº de série (opcional)</label><input id="p-serie" value="${esc(p.serie || '')}"></div>
         <div class="field"><label>Localização</label><input id="p-local" value="${esc(p.local || '')}"></div>
-        <div class="field"><label>Status</label><select id="p-status" onchange="Modules.pStatusChange()">
-          ${['disponivel', 'reservado', 'vendido', 'manutencao', 'garantia'].map(s => `<option value="${s}" ${p.status === s ? 'selected' : ''}>${s}</option>`).join('')}
-        </select></div>
-        <div class="field"><label>Em manutenção (un) <span class="muted" style="font-weight:400">não vendável</span></label><input id="p-manut" type="number" min="0" value="${p.manutencao || 0}"></div>
         <div class="field full"><label style="display:flex;align-items:center;gap:9px;cursor:pointer"><input type="checkbox" id="p-prevenda" ${p.prevenda ? 'checked' : ''}> 📋 Produto em Pré-venda (pode ser vendido antes de chegar — não dá baixa no estoque até a entrega)</label></div>
       </div>
       ${(p.custoHist && p.custoHist.length) ? `<div style="margin-top:14px"><div style="font-size:12.5px;font-weight:700;color:var(--txt-2);margin-bottom:6px">Histórico de custo</div>${p.custoHist.slice(0, 6).map(h => `<div class="mini-stat"><span>${Fmt.datetime(h.data)} · ${esc(h.usuario || 'Admin')}</span><span>${Fmt.brl(h.de)} → <b>${Fmt.brl(h.para)}</b></span></div>`).join('')}</div>` : ''}`,
       foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.saveProduto('${id || ''}')">Salvar</button>`
     });
-  },
-  manutencaoLista() {
-    const list = DB.all('produtos').filter(p => (p.manutencao || 0) > 0).sort((a, b) => (b.manutencao || 0) - (a.manutencao || 0));
-    const canFin = App.canFinance();
-    const valor = list.reduce((s, p) => s + (p.custoMedio || p.custo || 0) * (p.manutencao || 0), 0);
-    Modal.open({
-      title: '🟠 Produtos em manutenção', wide: true,
-      body: list.length ? `<div class="muted" style="margin-bottom:10px">${list.reduce((s, p) => s + (p.manutencao || 0), 0)} unidade(s) em manutenção${canFin ? ' · ' + Fmt.brl(valor) + ' investidos' : ''}.</div>
-        <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Categoria</th><th class="num">Físico</th><th class="num">Em manut.</th><th class="num">Disponível</th>${canFin ? '<th class="num">Custo méd.</th>' : ''}<th></th></tr></thead>
-        <tbody>${list.map(p => `<tr>
-          <td class="strong">${esc(p.nome)}<div class="muted" style="font-size:11px">${p.sku}${p.serie ? ' · S/N ' + p.serie : ''}</div></td>
-          <td>${esc(p.categoria)}</td>
-          <td class="num">${p.qtd}</td>
-          <td class="num"><span class="badge b-amber" style="background:#f9731620;color:#f97316">🟠 ${p.manutencao}</span></td>
-          <td class="num" style="color:${this.disp(p) > 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${this.disp(p)}</td>
-          ${canFin ? `<td class="num">${Fmt.brl(p.custoMedio || p.custo)}</td>` : ''}
-          <td class="num">${App.can('podeEditarProduto') ? `<button class="btn-ghost btn-sm" onclick="Modal.close();Modules.produtoForm('${p.id}')">✏️ Concluir manutenção</button>` : ''}</td></tr>`).join('')}</tbody></table></div>
-        <div class="muted" style="font-size:12px;margin-top:8px">Para liberar para venda: edite o produto e reduza a quantidade "Em manutenção" (ou mude o status para <b>Disponível</b>).</div>`
-        : '<div class="empty-state"><div class="big">✅</div>Nenhum produto em manutenção.</div>',
-      foot: `<button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
-    });
-  },
-  pStatusChange() {
-    const st = fval('p-status'), qtd = parseInt(fval('p-qtd')) || 0, m = document.getElementById('p-manut');
-    if (!m) return;
-    if (st === 'manutencao' && (parseInt(m.value) || 0) === 0) m.value = qtd; // tudo em manutenção
-    else if (st === 'disponivel') m.value = 0;                                // concluiu manutenção → libera p/ venda
   },
   saveProduto(id) {
     const nome = fval('p-nome'), sku = fval('p-sku');
@@ -1762,8 +1693,7 @@ const Modules = {
       nome, sku, barcode: fval('p-barcode'), categoria: fval('p-cat'), marca: fval('p-marca'),
       modelo: fval('p-modelo'), condicao: fval('p-cond'), qtd: parseInt(fval('p-qtd')) || 0,
       min: parseInt(fval('p-min')) || 0, custo, custoMedio: custo, preco,
-      serie: fval('p-serie'), local: fval('p-local'), status: fval('p-status'), prevenda: fchk('p-prevenda'),
-      manutencao: Math.max(0, parseInt(fval('p-manut')) || 0)
+      serie: fval('p-serie'), local: fval('p-local'), prevenda: fchk('p-prevenda')
     };
     if (id) {
       const cur = DB.get('produtos', id) || {};
@@ -1819,7 +1749,6 @@ const Modules = {
   entrada() {
     this.entradaLines = [];
     setTimeout(() => { const e = document.getElementById('ent-busca'); if (e) e.focus(); this.entRender(); }, 30);
-    const fs = DB.all('fornecedores');
     return `
     <div class="page-head"><div><h1>Entrada de Estoque</h1><p>Reabasteça produtos já cadastrados — sem cadastrar de novo</p></div>
       <div class="actions"><button class="btn-ghost" onclick="App.go('estoque')">📦 Ver estoque</button></div></div>
@@ -1835,7 +1764,6 @@ const Modules = {
     <div class="card" style="margin-bottom:16px">
       <div class="section-title">2. Dados da entrada</div>
       <div class="form-grid">
-        <div class="field"><label>Fornecedor (opcional)</label><select id="ent-forn"><option value="">—</option>${fs.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}</select></div>
         <div class="field"><label>Data da entrada</label><input id="ent-data" type="date" value="${new Date().toISOString().slice(0, 10)}"></div>
         <div class="field full"><label>Observação</label><input id="ent-obs" placeholder="Ex: nota fiscal, lote, etc."></div>
       </div>
@@ -1888,8 +1816,8 @@ const Modules = {
   entSalvar() {
     if (!this.entradaLines.length) return Toast.err('Adicione ao menos um produto.');
     if (this.entradaLines.some(l => l.qtd <= 0)) return Toast.err('Quantidade deve ser maior que zero.');
-    const fornId = fval('ent-forn'), data = new Date(fval('ent-data') + 'T12:00:00').toISOString(), obs = fval('ent-obs');
-    const fornNome = fornId ? (DB.get('fornecedores', fornId) || {}).nome : '';
+    const data = new Date(fval('ent-data') + 'T12:00:00').toISOString(), obs = fval('ent-obs');
+    const fornId = null, fornNome = '';
     let totV = 0;
     this.entradaLines.forEach(l => {
       const p = DB.get('produtos', l.produtoId); if (!p) return;
@@ -1897,7 +1825,7 @@ const Modules = {
       const custoMedio = qtdNova ? (((p.custoMedio || p.custo || 0) * p.qtd) + (l.custo * l.qtd)) / qtdNova : l.custo;
       const ents = (p.entradas || []).slice();
       ents.unshift({ data, tipo: 'Entrada de estoque', qtd: l.qtd, custoUnit: l.custo, fornecedor: fornNome, obs, responsavel: (typeof App !== 'undefined' && App.user() && App.user().nome) ? App.user().nome : 'Admin' });
-      DB.update('produtos', l.produtoId, { qtd: qtdNova, custo: l.custo, custoMedio: Math.round(custoMedio * 100) / 100, status: 'disponivel', entradas: ents });
+      DB.update('produtos', l.produtoId, { qtd: qtdNova, custo: l.custo, custoMedio: Math.round(custoMedio * 100) / 100, entradas: ents });
       DB.logMov('compra', 'Entrada de estoque: ' + l.qtd + 'x ' + l.nome + (fornNome ? ' (' + fornNome + ')' : '') + (obs ? ' · ' + obs : ''), { valor: l.qtd * l.custo, data });
       totV += l.qtd * l.custo;
     });
@@ -1930,10 +1858,10 @@ const Modules = {
     </div>`;
   },
   condColor(c) { return c === 'novo' ? 'var(--green)' : c === 'seminovo' ? 'var(--blue)' : 'var(--amber)'; },
-  disp(p) { return Math.max(0, (p.qtd || 0) - (p.reservado || 0) - (p.manutencao || 0)); }, // disponível p/ venda = físico − reservado − em manutenção
+  disp(p) { return Math.max(0, (p.qtd || 0) - (p.reservado || 0)); }, // disponível p/ venda = físico − reservado (pré-venda)
   pdvSearch() {
     const q = (fval('pdv-q') || '').toLowerCase();
-    let list = DB.all('produtos').filter(p => (this.disp(p) > 0 || p.prevenda) && p.status !== 'vendido');
+    let list = DB.all('produtos').filter(p => (this.disp(p) > 0 || p.prevenda));
     if (q) list = list.filter(p => p.nome.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || (p.barcode || '').includes(q));
     list = list.slice(0, 24);
     document.getElementById('pdv-results').innerHTML = list.map(p => {
@@ -2093,7 +2021,6 @@ const Modules = {
           <div class="field"><label>Valor aceito na troca (R$) *</label><input id="u-valor" type="text" inputmode="decimal" placeholder="0,00" value="${u ? String(u.valor).replace('.', ',') : ''}"></div>
           <div class="field"><label>Estado do produto</label><select id="u-estado"><option ${sel(u && u.estado, 'Excelente')}>Excelente</option><option ${u ? sel(u.estado, 'Bom') : 'selected'}>Bom</option><option ${sel(u && u.estado, 'Regular')}>Regular</option><option ${sel(u && u.estado, 'Com defeito')}>Com defeito</option></select></div>
           <div class="field"><label>Número de série</label><input id="u-serie" value="${u ? esc(u.serie || '') : ''}"></div>
-          <div class="field"><label>Status inicial</label><select id="u-status"><option ${sel(u && u.statusInicial, 'Disponível')}>Disponível</option><option ${u ? sel(u.statusInicial, 'Aguardando revisão') : 'selected'}>Aguardando revisão</option><option ${sel(u && u.statusInicial, 'Manutenção')}>Manutenção</option><option ${sel(u && u.statusInicial, 'Bloqueado')}>Bloqueado</option></select></div>
           <div class="field full"><label>Acompanha</label><div style="display:flex;gap:18px;padding-top:8px;flex-wrap:wrap"><label style="font-weight:400"><input type="checkbox" id="u-controle" ${!u || u.controle ? 'checked' : ''}> Controle</label><label style="font-weight:400"><input type="checkbox" id="u-cabos" ${!u || u.cabos ? 'checked' : ''}> Cabos</label><label style="font-weight:400"><input type="checkbox" id="u-caixa" ${u && u.caixa ? 'checked' : ''}> Caixa</label></div></div>
           <div class="field full"><label>Observações (estado, acessórios, defeitos, garantia...)</label><input id="u-obs" value="${u ? esc(u.obs || '') : ''}" placeholder="Detalhes da unidade recebida"></div>
         </div>
@@ -2140,7 +2067,7 @@ const Modules = {
     const p = DB.insert('produtos', {
       nome, sku: fval('un-sku') || 'USD-' + Date.now().toString(36).toUpperCase().slice(-5), barcode: '',
       categoria: fval('un-cat'), marca: fval('un-marca'), modelo: fval('un-modelo'), condicao: fval('un-cond'),
-      qtd: 0, min: parseInt(fval('un-min')) || 1, custo: 0, custoMedio: 0, preco: fnum('un-preco'), serie: '', local: 'Usados', status: 'disponivel'
+      qtd: 0, min: parseInt(fval('un-min')) || 1, custo: 0, custoMedio: 0, preco: fnum('un-preco'), serie: '', local: 'Usados'
     });
     Toast.ok('Produto cadastrado no catálogo.');
     this.utSel = p; this.utStep = 'unit'; this.utRender();
@@ -2158,7 +2085,7 @@ const Modules = {
     const obj = {
       produtoId: p.id, nome: p.nome, categoria: p.categoria, marca: p.marca, condicao: p.condicao, valor,
       estado: fval('u-estado'), serie: fval('u-serie'), controle: fchk('u-controle'), cabos: fchk('u-cabos'), caixa: fchk('u-caixa'),
-      obs: fval('u-obs'), statusInicial: fval('u-status')
+      obs: fval('u-obs')
     };
     if (this.utEditIdx >= 0) { this.cart.usados[this.utEditIdx] = obj; Toast.ok('Usado atualizado.'); }
     else { if (this.cart.usados.some(u => u.produtoId === p.id)) return Toast.warn('Esse produto já foi adicionado.'); this.cart.usados.push(obj); Toast.ok('Usado adicionado: ' + p.nome + ' (' + Fmt.brl(valor) + ').'); }
@@ -2279,7 +2206,7 @@ const Modules = {
         if (disp >= i.qtd) { DB.update('produtos', i.produtoId, { reservado: (p.reservado || 0) + i.qtd }); i.__res = true; }
         return;
       }
-      const novaQtd = p.qtd - i.qtd; DB.update('produtos', i.produtoId, { qtd: novaQtd, status: novaQtd <= 0 ? 'vendido' : p.status });
+      const novaQtd = p.qtd - i.qtd; DB.update('produtos', i.produtoId, { qtd: novaQtd });
     });
     const troco = Math.max(0, soma - total);
     const operador = (typeof App !== 'undefined' && App.user() && App.user().nome) ? App.user().nome : 'Admin';
@@ -2293,7 +2220,6 @@ const Modules = {
       pagamentos, recebido: soma, troco, usadoEntrada: usados.length ? usados.map(u => u.nome).join(', ') : null, usadoValor: usadoVal, usados: usados, usuario: operador, cupom: cupomSnap
     });
     // Cada usado recebido → reutiliza o produto do catálogo: +1 unidade (sem duplicar) e custo médio
-    const stMap = { 'Disponível': 'disponivel', 'Aguardando revisão': 'manutencao', 'Manutenção': 'manutencao', 'Bloqueado': 'reservado' };
     usados.forEach(u => {
       const p = DB.get('produtos', u.produtoId);
       if (p) {
@@ -2301,8 +2227,6 @@ const Modules = {
         const custoMedio = qNova ? (((p.custoMedio || p.custo || 0) * p.qtd) + u.valor) / qNova : u.valor;
         const patch = { qtd: qNova, custo: u.valor, custoMedio: Math.round(custoMedio * 100) / 100 };
         if (u.serie && !p.serie) patch.serie = u.serie;
-        if (u.statusInicial && u.statusInicial !== 'Disponível') patch.status = stMap[u.statusInicial] || p.status;
-        if (stMap[u.statusInicial] === 'manutencao') patch.manutencao = (p.manutencao || 0) + 1; // unidade entra em manutenção, não disponível
         DB.update('produtos', u.produtoId, patch);
       }
       // Usado recebido como pagamento é uma forma NÃO-financeira: só entra no estoque/histórico,
@@ -2334,37 +2258,6 @@ const Modules = {
     if (typeof Print !== 'undefined') Print.maybeAfterSale(venda);
   },
 
-  /* ===================== FORNECEDORES ===================== */
-  fornecedores() {
-    const f = DB.all('fornecedores');
-    return `<div class="page-head"><div><h1>Fornecedores</h1><p>${f.length} fornecedores cadastrados</p></div>
-      <div class="actions"><button class="btn-primary" onclick="Modules.fornForm()">+ Novo fornecedor</button></div></div>
-      <div class="table-wrap"><table><thead><tr><th>Fornecedor</th><th>CNPJ</th><th>Contato</th><th>Telefone</th><th>Cidade</th><th></th></tr></thead>
-      <tbody>${f.map(x => `<tr><td class="strong">${esc(x.nome)}<div class="muted" style="font-size:11px">${esc(x.email || '')}</div></td><td>${esc(x.cnpj || '-')}</td><td>${esc(x.contato || '-')}</td><td>${esc(x.tel || '-')}</td><td>${esc(x.cidade || '-')}</td>
-      <td class="num"><button class="btn-icon" onclick="Modules.fornForm('${x.id}')">✏️</button> <button class="btn-icon" onclick="Modules.delForn('${x.id}')">🗑️</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted" style="text-align:center;padding:30px">Nenhum fornecedor.</td></tr>'}</tbody></table></div>`;
-  },
-  fornForm(id) {
-    const f = id ? DB.get('fornecedores', id) : {};
-    Modal.open({
-      title: id ? 'Editar fornecedor' : 'Novo fornecedor',
-      body: `<div class="form-grid">
-        <div class="field full"><label>Nome / Razão social *</label><input id="f-nome" value="${esc(f.nome || '')}"></div>
-        <div class="field"><label>CNPJ</label><input id="f-cnpj" value="${esc(f.cnpj || '')}"></div>
-        <div class="field"><label>Contato</label><input id="f-contato" value="${esc(f.contato || '')}"></div>
-        <div class="field"><label>Telefone</label><input id="f-tel" value="${esc(f.tel || '')}"></div>
-        <div class="field"><label>E-mail</label><input id="f-email" value="${esc(f.email || '')}"></div>
-        <div class="field full"><label>Cidade/UF</label><input id="f-cidade" value="${esc(f.cidade || '')}"></div></div>`,
-      foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.saveForn('${id || ''}')">Salvar</button>`
-    });
-  },
-  saveForn(id) {
-    const nome = fval('f-nome'); if (!nome) return Toast.err('Informe o nome.');
-    const d = { nome, cnpj: fval('f-cnpj'), contato: fval('f-contato'), tel: fval('f-tel'), email: fval('f-email'), cidade: fval('f-cidade') };
-    if (id) DB.update('fornecedores', id, d); else DB.insert('fornecedores', d);
-    Modal.close(); Toast.ok('Fornecedor salvo.'); App.go('fornecedores');
-  },
-  delForn(id) { Modal.confirm('Excluir este fornecedor?', () => { DB.remove('fornecedores', id); App.go('fornecedores'); Toast.ok('Removido.'); }, 'Excluir'); },
-
   /* ===================== COMPRAS ===================== */
   compras() {
     const cs = DB.all('compras').slice().sort((a, b) => new Date(b.data) - new Date(a.data));
@@ -2391,7 +2284,6 @@ const Modules = {
   compraTogglePrazo() { const w = document.getElementById('c-venc-wrap'); if (w) w.style.display = fchk('c-prazo') ? 'block' : 'none'; },
   compraForm() {
     this.compraItens = [];
-    const fs = DB.all('fornecedores');
     const resp = (typeof App !== 'undefined' && App.user() && App.user().nome) ? App.user().nome : 'Admin';
     const formasPg = ['Dinheiro', 'PIX', 'Débito', 'Crédito à vista', 'Transferência', 'Boleto'];
     const hoje = new Date().toISOString().slice(0, 10);
@@ -2414,11 +2306,9 @@ const Modules = {
         <div class="field" id="c-venc-wrap" style="display:none"><label>Vencimento</label><input type="date" id="c-venc"></div>
       </div>
       <div class="muted" style="font-size:11.5px;margin-top:2px">Por padrão a compra é <b>paga à vista</b> (registra a saída no financeiro/caixa e NÃO cria conta a pagar). Marque "a prazo" só se o pagamento ficará pendente.</div>
-      <details style="margin-top:14px"><summary style="cursor:pointer;color:var(--txt-2);font-size:13px">Opcional — fornecedor e observação</summary>
-        <div class="form-grid" style="margin-top:10px">
-          <div class="field"><label>Fornecedor (opcional)</label><select id="c-forn"><option value="">— sem fornecedor —</option>${fs.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}</select></div>
-          <div class="field full"><label>Observação (opcional)</label><input id="c-obs" placeholder="Ex: lote promocional, compra balcão..."></div>
-        </div></details>
+      <div class="form-grid" style="margin-top:14px">
+        <div class="field full"><label>Observação (opcional)</label><input id="c-obs" placeholder="Ex: lote promocional, compra balcão, nota fiscal..."></div>
+      </div>
       <div class="muted" style="margin-top:10px;font-size:12px">Responsável pelo lançamento: <b>${esc(resp)}</b></div>
       <div id="compra-resumo"></div>`,
       foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.saveCompra()">✅ Salvar compra</button>`
@@ -2458,18 +2348,17 @@ const Modules = {
   saveCompra() {
     if (!this.compraItens.length) return Toast.err('Adicione ao menos um produto à compra.');
     const total = this.compraItens.reduce((s, i) => s + i.qtd * i.custo, 0);
-    const fornId = fval('c-forn') || null, obs = fval('c-obs') || '';
-    const fornNome = fornId ? (DB.get('fornecedores', fornId) || {}).nome : '';
+    const obs = fval('c-obs') || '';
+    const fornId = null, fornNome = '';
     const resp = (typeof App !== 'undefined' && App.user() && App.user().nome) ? App.user().nome : 'Admin';
     this.compraItens.forEach(i => {
       if (i.produtoId) {
         const p = DB.get('produtos', i.produtoId);
         const qtdNova = p.qtd + i.qtd;
         const custoMedio = qtdNova ? (((p.custoMedio || p.custo || 0) * p.qtd) + i.custo * i.qtd) / qtdNova : i.custo;
-        // compra entra direto no estoque disponível (sem status de manutenção)
-        DB.update('produtos', i.produtoId, { qtd: qtdNova, custoMedio: Math.round(custoMedio * 100) / 100, custo: i.custo, status: 'disponivel' });
+        DB.update('produtos', i.produtoId, { qtd: qtdNova, custoMedio: Math.round(custoMedio * 100) / 100, custo: i.custo });
       } else {
-        const novo = DB.insert('produtos', { nome: i.nome, sku: 'NEW-' + Date.now().toString(36).toUpperCase().slice(-5), barcode: '', categoria: 'Acessórios', marca: '—', modelo: '', condicao: i.condicao || 'novo', qtd: i.qtd, min: 1, custo: i.custo, custoMedio: Math.round(i.custo * 100) / 100, preco: Math.round(i.custo * 1.6), serie: '', local: 'A definir', status: 'disponivel', manutencao: 0, criadoEm: new Date().toISOString(), custoHist: [], precoHist: [] });
+        const novo = DB.insert('produtos', { nome: i.nome, sku: 'NEW-' + Date.now().toString(36).toUpperCase().slice(-5), barcode: '', categoria: 'Acessórios', marca: '—', modelo: '', condicao: i.condicao || 'novo', qtd: i.qtd, min: 1, custo: i.custo, custoMedio: Math.round(i.custo * 100) / 100, preco: Math.round(i.custo * 1.6), serie: '', local: 'A definir', criadoEm: new Date().toISOString(), custoHist: [], precoHist: [] });
         i.produtoId = novo.id;
       }
     });
@@ -2496,75 +2385,55 @@ const Modules = {
     Modal.close(); App.go('compras');
   },
 
-  /* ===================== AVALIAÇÃO DE USADOS ===================== */
+  /* ===================== USADOS (recebimento direto no estoque) ===================== */
   usados() {
-    const a = DB.all('avaliacoes').slice().sort((x, y) => new Date(y.data) - new Date(x.data));
-    return `<div class="page-head"><div><h1>Avaliação de Usados</h1><p>Avalie aparelhos recebidos: estado, manutenção, margem prevista</p></div>
-      <div class="actions"><button class="btn-primary" onclick="Modules.avalForm()">+ Nova avaliação</button></div></div>
-      <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Estado</th><th>Caixa/Acess.</th><th class="num">Mercado</th><th class="num">Aceito</th><th class="num">Manut.</th><th class="num">Custo final</th><th class="num">Preço sug.</th><th class="num">Margem</th><th></th></tr></thead>
-      <tbody>${a.map(x => `<tr><td class="strong">${esc(x.produtoNome)}<div class="muted" style="font-size:11px">${x.marca || ''} ${x.modelo || ''}${x.serie ? ' · S/N ' + x.serie : ''}</div></td>
-        <td>${esc(x.estado)}</td><td>${x.temCaixa ? '📦' : '—'} ${x.temAcessorios ? '🎮' : ''}</td>
-        <td class="num">${Fmt.brl(x.valorMercado)}</td><td class="num">${Fmt.brl(x.valorAceito)}</td><td class="num">${Fmt.brl(x.custoManutencao)}</td>
-        <td class="num strong">${Fmt.brl(x.custoFinal)}</td><td class="num">${Fmt.brl(x.precoSugerido)}</td>
-        <td class="num"><span class="badge ${x.margem > 0 ? 'b-green' : 'b-red'}">${Fmt.brl(x.margem)}</span></td>
-        <td class="num"><button class="btn-ghost btn-sm" onclick="Modules.aprovarUsado('${x.id}')">→ Estoque</button></td></tr>`).join('') || '<tr><td colspan="10" class="muted" style="text-align:center;padding:30px">Nenhuma avaliação.</td></tr>'}</tbody></table></div>`;
+    const list = DB.all('produtos').filter(p => p.condicao === 'usado').slice().sort((a, b) => new Date(b.criadoEm || 0) - new Date(a.criadoEm || 0));
+    const canFin = App.canFinance();
+    return `<div class="page-head"><div><h1>Receber Usado</h1><p>Cadastre um produto usado direto no estoque — sem etapa de avaliação</p></div>
+      <div class="actions"><button class="btn-primary" onclick="Modules.usadoReceber()">+ Receber usado</button></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Categoria</th><th class="num">Qtd</th>${canFin ? '<th class="num">Custo</th>' : ''}<th class="num">Preço</th><th>Local</th><th></th></tr></thead>
+      <tbody>${list.map(p => `<tr>
+        <td class="strong prod-link" style="cursor:pointer" onclick="ProdHist.open('${p.id}')">${esc(p.nome)} 🔎<div class="muted" style="font-size:11px">${p.sku}${p.serie ? ' · S/N ' + p.serie : ''}</div></td>
+        <td>${esc(p.categoria)}<div class="muted" style="font-size:11px">${esc(p.marca || '')}</div></td>
+        <td class="num strong">${p.qtd}</td>
+        ${canFin ? `<td class="num">${Fmt.brl(p.custoMedio || p.custo || 0)}</td>` : ''}
+        <td class="num strong">${Fmt.brl(p.preco || 0)}</td>
+        <td>${esc(p.local || '—')}</td>
+        <td class="num">${App.can('podeEditarProduto') ? `<button class="btn-icon" onclick="Modules.produtoForm('${p.id}')">✏️</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="muted" style="text-align:center;padding:30px">Nenhum usado no estoque ainda.</td></tr>'}</tbody></table></div>`;
   },
-  avalForm() {
+  usadoReceber() {
     Modal.open({
-      title: '🔍 Avaliação de usado', wide: true,
+      title: '🔄 Receber usado no estoque', wide: true,
       body: `<div class="form-grid">
-        <div class="field full"><label>Produto recebido *</label><input id="a-nome" placeholder="Ex: PlayStation 4 Pro 1TB"></div>
-        <div class="field"><label>Categoria</label><select id="a-cat">${DB.all('categorias').map(c => `<option>${c.nome}</option>`).join('')}</select></div>
-        <div class="field"><label>Marca</label><select id="a-marca">${DB.all('marcas').map(m => `<option>${m.nome}</option>`).join('')}</select></div>
-        <div class="field"><label>Modelo</label><input id="a-modelo"></div>
-        <div class="field"><label>Nº de série</label><input id="a-serie"></div>
-        <div class="field"><label>Estado geral</label><select id="a-estado"><option>Excelente</option><option selected>Bom</option><option>Regular</option><option>Com defeito</option></select></div>
-        <div class="field"><label>Acompanha</label><div style="display:flex;gap:16px;padding-top:8px"><label style="font-weight:400"><input type="checkbox" id="a-caixa" checked> Caixa</label><label style="font-weight:400"><input type="checkbox" id="a-acess" checked> Acessórios</label></div></div>
-        <div class="field"><label>Valor de mercado (R$)</label><input id="a-mercado" type="number" step="0.01" value="0" oninput="Modules.calcAval()"></div>
-        <div class="field"><label>Valor aceito pela loja (R$) *</label><input id="a-aceito" type="number" step="0.01" value="0" oninput="Modules.calcAval()"></div>
-        <div class="field"><label>Custo de manutenção (R$)</label><input id="a-manut" type="number" step="0.01" value="0" oninput="Modules.calcAval()"></div>
-        <div class="field"><label>Preço sugerido de venda (R$)</label><input id="a-preco" type="number" step="0.01" value="0" oninput="Modules.calcAval()"></div>
+        <div class="field full"><label>Produto recebido *</label><input id="u2-nome" placeholder="Ex: PlayStation 4 Pro 1TB"></div>
+        <div class="field"><label>Categoria</label><select id="u2-cat">${DB.all('categorias').map(c => `<option>${c.nome}</option>`).join('')}</select></div>
+        <div class="field"><label>Marca</label><select id="u2-marca">${DB.all('marcas').map(m => `<option>${m.nome}</option>`).join('')}</select></div>
+        <div class="field"><label>Modelo</label><input id="u2-modelo"></div>
+        <div class="field"><label>Nº de série</label><input id="u2-serie"></div>
+        <div class="field"><label>Quantidade</label><input id="u2-qtd" type="number" min="1" value="1"></div>
+        <div class="field"><label>Custo (valor pago) (R$) *</label><input id="u2-custo" type="text" inputmode="decimal" placeholder="ex: 800,00"></div>
+        <div class="field"><label>Preço de venda (R$)</label><input id="u2-preco" type="text" inputmode="decimal" placeholder="ex: 1.299,00"></div>
+        <div class="field full"><label>Localização</label><input id="u2-local" value="Usados"></div>
       </div>
-      <div id="aval-resumo"></div>`,
-      foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.saveAval()">Salvar avaliação</button>`
+      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--txt-2)"><input type="checkbox" id="u2-fin" checked> Lançar a compra do usado no Financeiro (saída paga)</label>`,
+      foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.usadoSalvar()">✅ Cadastrar no estoque</button>`
     });
-    this.calcAval();
   },
-  calcAval() {
-    const aceito = fnum('a-aceito'), manut = fnum('a-manut'), preco = fnum('a-preco');
-    const custoFinal = aceito + manut, margem = preco - custoFinal;
-    const box = document.getElementById('aval-resumo'); if (!box) return;
-    box.innerHTML = `<div class="card" style="margin-top:14px;background:var(--bg-2)">
-      <div class="mini-stat"><span>Custo final (aceito + manutenção)</span><b>${Fmt.brl(custoFinal)}</b></div>
-      <div class="mini-stat"><span>Preço sugerido</span><b>${Fmt.brl(preco)}</b></div>
-      <div class="mini-stat" style="font-size:16px"><span class="strong">Margem prevista</span><b style="color:${margem >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(margem)} ${preco ? '(' + Fmt.pct(margem / preco * 100) + ')' : ''}</b></div></div>`;
-  },
-  saveAval() {
-    const nome = fval('a-nome'), aceito = fnum('a-aceito');
-    if (!nome || !aceito) return Toast.err('Informe produto e valor aceito.');
-    const manut = fnum('a-manut'), preco = fnum('a-preco'), custoFinal = aceito + manut;
-    DB.insert('avaliacoes', {
-      data: new Date().toISOString(), produtoNome: nome, categoria: fval('a-cat'), marca: fval('a-marca'),
-      modelo: fval('a-modelo'), serie: fval('a-serie'), estado: fval('a-estado'),
-      temCaixa: fchk('a-caixa'), temAcessorios: fchk('a-acess'),
-      valorMercado: fnum('a-mercado'), valorAceito: aceito, custoManutencao: manut,
-      custoFinal, precoSugerido: preco, margem: preco - custoFinal, status: 'avaliado'
+  usadoSalvar() {
+    const nome = fval('u2-nome'), custo = moneyBR(fval('u2-custo'));
+    if (!nome) return Toast.err('Informe o produto recebido.');
+    if (isNaN(custo) || custo < 0) return Toast.err('Informe o custo (valor pago) do usado.');
+    const qtd = parseInt(fval('u2-qtd')) || 1;
+    const precoNum = moneyBR(fval('u2-preco')); const preco = isNaN(precoNum) ? Math.round(custo * 1.6) : precoNum;
+    const novo = DB.insert('produtos', {
+      nome, sku: 'USD-' + Date.now().toString(36).toUpperCase().slice(-5), barcode: '',
+      categoria: fval('u2-cat'), marca: fval('u2-marca'), modelo: fval('u2-modelo'), condicao: 'usado',
+      qtd, min: 1, custo, custoMedio: custo, preco, serie: fval('u2-serie'), local: fval('u2-local') || 'Usados',
+      criadoEm: new Date().toISOString(), custoHist: [], precoHist: []
     });
-    Modal.close(); Toast.ok('Avaliação registrada.'); App.go('usados');
-  },
-  aprovarUsado(id) {
-    const a = DB.get('avaliacoes', id);
-    DB.insert('produtos', {
-      nome: a.produtoNome, sku: 'USD-' + Date.now().toString(36).toUpperCase().slice(-5), barcode: '',
-      categoria: a.categoria, marca: a.marca, modelo: a.modelo, condicao: 'usado',
-      qtd: 1, min: 1, custo: a.custoFinal, custoMedio: a.custoFinal, preco: a.precoSugerido,
-      serie: a.serie, local: 'Usados', status: a.estado === 'Com defeito' ? 'manutencao' : 'disponivel',
-      manutencao: a.estado === 'Com defeito' ? 1 : 0
-    });
-    DB.logMov('usado', 'Usado aprovado p/ estoque: ' + a.produtoNome, { valor: a.custoFinal });
-    DB.logFin({ tipo: 'saida', categoria: 'Compra de usado', descricao: 'Compra de usado: ' + a.produtoNome, valor: a.valorAceito, status: 'pago', origem: 'usado' });
-    if (a.custoManutencao) DB.logFin({ tipo: 'saida', categoria: 'Manutenção', descricao: 'Manutenção: ' + a.produtoNome, valor: a.custoManutencao, status: 'pago' });
-    Toast.ok('Usado adicionado ao estoque.'); App.go('usados');
+    DB.logMov('usado', 'Usado recebido no estoque: ' + qtd + 'x ' + nome, { valor: custo * qtd, refId: novo.id });
+    if (fchk('u2-fin')) DB.logFin({ tipo: 'saida', categoria: 'Compra de usado', descricao: 'Compra de usado: ' + nome, valor: custo * qtd, pago: custo * qtd, status: 'pago', origem: 'usado', refId: novo.id });
+    Modal.close(); Toast.ok('Usado cadastrado no estoque.'); App.go('usados');
   },
 
   /* ===================== TROCAS ===================== */
@@ -2588,7 +2457,7 @@ const Modules = {
     return `<div class="page-head"><div><h1>Movimentações</h1><p>Histórico completo e rastreabilidade de tudo que acontece no sistema</p></div></div>
       <div class="toolbar"><input class="grow" id="mov-q" placeholder="Buscar movimentação..." oninput="Modules.renderMovs()">
         <select id="mov-tipo" onchange="Modules.renderMovs()"><option value="">Todos os tipos</option>
-        ${['venda', 'compra', 'usado', 'troca', 'garantia', 'devolucao', 'ajuste', 'manutencao'].map(t => `<option value="${t}">${t}</option>`).join('')}</select></div>
+        ${['venda', 'compra', 'usado', 'troca', 'garantia', 'devolucao', 'ajuste'].map(t => `<option value="${t}">${t}</option>`).join('')}</select></div>
       <div id="mov-list"></div>`;
   },
   renderMovs() {
@@ -3128,7 +2997,7 @@ const PV = {
       if (!it.produtoId) return;
       const pr = DB.get('produtos', it.produtoId); if (!pr) return;
       const novaQtd = Math.max(0, (pr.qtd || 0) - it.qtd);
-      DB.update('produtos', it.produtoId, { qtd: novaQtd, reservado: Math.max(0, (pr.reservado || 0) - it.qtd), status: novaQtd <= 0 ? 'vendido' : pr.status });
+      DB.update('produtos', it.produtoId, { qtd: novaQtd, reservado: Math.max(0, (pr.reservado || 0) - it.qtd) });
     });
   }
 };
@@ -3433,7 +3302,7 @@ Modules.pvMarcarItemPrevendaSave = function (vendaId, idx) {
   const v = DB.get('vendas', vendaId); if (!v || !v.itens[idx]) return;
   const it = v.itens[idx];
   const cli = fval('pmi-cli'); if (!cli) return Toast.err('Informe o nome do cliente.');
-  if (it.produtoId && it.entrega === 'entregue') { const p = DB.get('produtos', it.produtoId); if (p) DB.update('produtos', it.produtoId, { qtd: (p.qtd || 0) + it.qtd, status: 'disponivel' }); } // devolve estoque
+  if (it.produtoId && it.entrega === 'entregue') { const p = DB.get('produtos', it.produtoId); if (p) DB.update('produtos', it.produtoId, { qtd: (p.qtd || 0) + it.qtd }); } // devolve estoque
   const itens = v.itens.slice();
   itens[idx] = Object.assign({}, it, { entrega: 'prevenda', entregueEm: null, reservado: false, dataPrevista: fval('pmi-data') || '' });
   DB.update('vendas', vendaId, { itens, temPrevenda: true, cliente: cli, telefone: fval('pmi-tel') || v.telefone || '' });
@@ -3932,7 +3801,7 @@ Modules.vdCancel = function (id) {
   if (!App.can('podeCancelar')) return Toast.err('Você não tem permissão para cancelar vendas.');
   Modal.confirm('Cancelar esta venda? O estoque será devolvido, o faturamento estornado e o lucro/relatórios atualizados automaticamente.', () => {
     const v = DB.get('vendas', id); if (!v) return;
-    v.itens.forEach(i => { const p = DB.get('produtos', i.produtoId); if (p) DB.update('produtos', i.produtoId, { qtd: p.qtd + i.qtd, status: 'disponivel' }); });
+    v.itens.forEach(i => { const p = DB.get('produtos', i.produtoId); if (p) DB.update('produtos', i.produtoId, { qtd: p.qtd + i.qtd }); });
     // se houve usado recebido na troca, removê-lo do estoque (entrou pela venda)
     DB.update('vendas', id, { cancelada: true, canceladaEm: new Date().toISOString() });
     const fin = DB.all('financeiro').find(f => f.refId === id && f.origem === 'venda');
@@ -4176,7 +4045,7 @@ Modules.cxSave = function (acao) {
       nome: prod, sku: 'USD-' + Date.now().toString(36).toUpperCase().slice(-5), barcode: '',
       categoria: fval('cx-cat'), marca: '—', modelo: '', condicao: fval('cx-cond'),
       qtd: 1, min: 1, custo: val, custoMedio: val, preco: Math.round(val * 1.6), serie: fval('cx-serie'),
-      local: 'Usados', status: 'disponivel'
+      local: 'Usados'
     });
     DB.logFin({ tipo: 'saida', categoria: 'Compra de usado', descricao: '[Caixa] Compra usado: ' + prod, valor: val, status: 'pago', origem: 'usado' });
     DB.logMov('usado', 'Compra de usado (caixa): ' + prod + ' — custo ' + Fmt.brl(val), { valor: val });
@@ -4549,7 +4418,7 @@ Modules.impConfirm = function () {
             nome: it.nome, sku: it.sku || ('IMP-' + Date.now().toString(36).toUpperCase().slice(-5)), barcode: it.barcode || '',
             categoria: defCat, marca: '—', modelo: '', condicao: 'novo', unidade: it.unidade || '',
             qtd: Math.max(0, it.estoque || 0), min: 1, custo: it.custo || 0, custoMedio: it.custo || 0, preco: it.preco || 0,
-            serie: '', local: 'Importado Omie', status: 'disponivel', origemImport: 'omie'
+            serie: '', local: 'Importado Omie', origemImport: 'omie'
           });
           novos++;
         } else if (it.matchId) {
@@ -4873,7 +4742,7 @@ Modules.cfgUsuariosCard = function () {
 Modules.cfgPermissoesCard = function () {
   const cfg = DB.all('config')[0] || {};
   const pf = Object.assign({}, PERM_DEFAULT_FUNC, cfg.permFuncionario || {}, { modules: Object.assign({}, PERM_DEFAULT_FUNC.modules, (cfg.permFuncionario || {}).modules || {}) });
-  const mods = [['pdv', 'PDV — Venda'], ['caixa', 'Caixa da Loja'], ['estoque', 'Estoque'], ['entrada', 'Entrada de Estoque'], ['vendasDia', 'Vendas do Dia'], ['dashboard', 'Dashboard'], ['compras', 'Compras'], ['fornecedores', 'Fornecedores'], ['usados', 'Avaliação de Usados'], ['trocas', 'Trocas'], ['prevendas', 'Pré-venda / Reservas'], ['movimentacoes', 'Movimentações'], ['garantias', 'Garantias'], ['financeiro', 'Financeiro'], ['relatorios', 'Relatórios'], ['config', 'Configurações']];
+  const mods = [['pdv', 'PDV — Venda'], ['caixa', 'Caixa da Loja'], ['estoque', 'Estoque'], ['entrada', 'Entrada de Estoque'], ['vendasDia', 'Vendas do Dia'], ['dashboard', 'Dashboard'], ['compras', 'Compras'], ['usados', 'Receber Usado'], ['trocas', 'Trocas'], ['prevendas', 'Pré-venda / Reservas'], ['movimentacoes', 'Movimentações'], ['garantias', 'Garantias'], ['financeiro', 'Financeiro'], ['relatorios', 'Relatórios'], ['config', 'Configurações']];
   const flags = [['verFinanceiro', 'Ver custo, lucro e margem'], ['podeCancelar', 'Cancelar vendas'], ['podeDesconto', 'Dar desconto no PDV'], ['podeAlterarPreco', 'Alterar preço no PDV'], ['podeEditarProduto', 'Editar / excluir produtos'], ['podeSangria', 'Sangria / retirada do caixa']];
   const chk = (k, v, isMod) => `<label style="display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;cursor:pointer;font-size:13px"><input type="checkbox" ${v ? 'checked' : ''} onchange="Modules.cfgPermSet('${k}',this.checked,${isMod})"> ${k}</label>`;
   return `<div class="card" style="margin-top:18px">
@@ -5248,7 +5117,7 @@ Modules.finForm = function (tipo, id) {
       <div class="field full"><label>Descrição *</label><input id="ff-desc" value="${esc(r.descricao || '')}"></div>
       <div class="field"><label>Categoria</label><select id="ff-cat">${cats.map(c => `<option ${r.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
       <div class="field"><label>${ehPagar ? 'Subcategoria' : 'Origem'}</label><input id="ff-sub" value="${esc(ehPagar ? (r.subcategoria || '') : (r.subcategoria || ''))}" placeholder="${ehPagar ? 'opcional' : 'Ex: Pedido #2548'}"></div>
-      ${ehPagar ? `<div class="field"><label>Fornecedor</label><select id="ff-forn"><option value="">—</option>${DB.all('fornecedores').map(f => `<option value="${f.id}" ${r.fornecedorId === f.id ? 'selected' : ''}>${esc(f.nome)}</option>`).join('')}</select></div>` : `<div class="field"><label>Forma de recebimento</label><select id="ff-forma">${['PIX', 'Dinheiro', 'Débito', 'Crédito', 'Boleto', 'Transferência'].map(f => `<option ${r.formaPagamento === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>`}
+      ${ehPagar ? '' : `<div class="field"><label>Forma de recebimento</label><select id="ff-forma">${['PIX', 'Dinheiro', 'Débito', 'Crédito', 'Boleto', 'Transferência'].map(f => `<option ${r.formaPagamento === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>`}
       <div class="field"><label>Data de emissão</label><input id="ff-emis" type="date" value="${dval('emissao')}"></div>
       <div class="field"><label>Data de vencimento</label><input id="ff-venc" type="date" value="${dval('vencimento')}"></div>
       <div class="field"><label>Valor total (R$) *</label><input id="ff-valor" type="number" step="0.01" value="${r.valor || 0}"></div>
@@ -5266,7 +5135,7 @@ Modules.finSave = function (tipo, id) {
     emissao: new Date(fval('ff-emis')).toISOString(), vencimento: new Date(fval('ff-venc')).toISOString(),
     data: new Date(fval('ff-venc')).toISOString(), valor, formaPagamento: fval('ff-forma'), obs: fval('ff-obs'), origem: 'manual'
   };
-  if (ehPagar) data.fornecedorId = fval('ff-forn') || null;
+  if (ehPagar) { const c0 = id ? DB.get('financeiro', id) : null; data.fornecedorId = (c0 && c0.fornecedorId) || null; }
   else data.pago = fnum('ff-pago') || 0;
   if (id) { const cur = DB.get('financeiro', id); data.pago = ehPagar ? (cur.pago || 0) : data.pago; DB.update('financeiro', id, data); Toast.ok('Conta atualizada.'); }
   else { data.pago = data.pago || 0; data.conciliado = false; DB.insert('financeiro', data); Toast.ok('Conta lançada.'); }
@@ -5623,21 +5492,12 @@ const BI = {
     return (mesmoDia ? Fmt.date(r.start) : Fmt.date(r.start) + ' até ' + Fmt.date(r.end)) + ' (' + nome + ')';
   },
   vendasPeriodo(periodo, de, ate) { const r = this.range(periodo, de, ate); return this.vendas().filter(v => { const d = new Date(v.data); return d >= r.start && d <= r.end; }); },
-  crossFor(skus, vendasList) {
-    const vendas = vendasList || this.vendas(), res = {};
-    skus.forEach(anchor => {
-      const ow = vendas.filter(v => v.itens.some(i => i.sku === anchor)), comp = {};
-      ow.forEach(v => { [...new Set(v.itens.map(i => i.sku))].forEach(s => { if (s !== anchor) comp[s] = (comp[s] || 0) + 1; }); });
-      res[anchor] = { sku: anchor, nome: (this.prodInfo(anchor) || {}).nome || anchor, orders: ow.length, comps: Object.entries(comp).map(([s, c]) => ({ sku: s, nome: (this.prodInfo(s) || {}).nome || s, count: c, pct: ow.length ? c / ow.length * 100 : 0 })).sort((a, b) => b.count - a.count) };
-    });
-    return res;
-  }
 };
 function periodOptsHtml(sel) { return [['all', 'Todo o período'], ['hoje', 'Hoje'], ['ontem', 'Ontem'], ['7d', 'Últimos 7 dias'], ['15d', 'Últimos 15 dias'], ['30d', 'Últimos 30 dias'], ['mes', 'Mês atual'], ['mesAnterior', 'Mês anterior'], ['3m', 'Últimos 3 meses'], ['6m', 'Últimos 6 meses'], ['12m', 'Últimos 12 meses'], ['ano', 'Ano atual'], ['anoAnterior', 'Ano anterior'], ['custom', 'Período personalizado']].map(o => `<option value="${o[0]}" ${sel === o[0] ? 'selected' : ''}>${o[1]}</option>`).join(''); }
 
 Modules.biState = { tab: 'geral', trend: 'dia', sel: [], periodo: '30d', de: '', ate: '' };
 Modules.relatorios = function () {
-  const tabs = [['geral', '📊 Visão geral'], ['insights', '🧠 Insights'], ['simulador', '🧮 Simulador'], ['segmentos', '🧩 Segmentos'], ['pagamentos', '💳 Formas de pagamento'], ['prevendas', '📋 Pré-vendas'], ['cross', '🔗 Vendas cruzadas'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['categorias', '🗂️ Categorias'], ['tendencias', '📈 Tendências'], ['rentab', '💎 Rentabilidade'], ['estoque', '📦 Estoque']];
+  const tabs = [['geral', '📊 Visão geral'], ['simulador', '🧮 Simulador'], ['segmentos', '🧩 Segmentos'], ['pagamentos', '💳 Formas de pagamento'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['rentab', '💎 Rentabilidade']];
   const st = this.biState, r = BI.range(st.periodo, st.de, st.ate);
   setTimeout(() => Modules.biRender(), 20);
   return `
@@ -5687,7 +5547,7 @@ Modules.biRangeCtx = function () {
 Modules.biInit = function () { this.biRender(); };
 Modules.biSetTab = function (t) {
   this.biState.tab = t;
-  const keys = ['geral', 'insights', 'simulador', 'segmentos', 'pagamentos', 'prevendas', 'cross', 'rankings', 'pesquisa', 'categorias', 'tendencias', 'rentab', 'estoque'];
+  const keys = ['geral', 'simulador', 'segmentos', 'pagamentos', 'rankings', 'pesquisa', 'rentab'];
   document.querySelectorAll('#bi-subnav .tab').forEach((el, i) => el.classList.toggle('active', keys[i] === t));
   this.biRender();
 };
@@ -5695,7 +5555,7 @@ Modules.biRender = function () {
   const b = document.getElementById('bi-body'); if (!b) return;
   const t = this.biState.tab;
   try {
-    b.innerHTML = ({ geral: this.biGeral, insights: this.biInsights, simulador: this.biSimulador, segmentos: this.biSegmentos, pagamentos: this.biPagamentos, prevendas: this.biPrevendas, cross: this.biCross, rankings: this.biRankings, pesquisa: this.biPesquisa, categorias: this.biCategorias, tendencias: this.biTendencias, rentab: this.biRentab, estoque: this.biEstoque })[t].call(this);
+    b.innerHTML = ({ geral: this.biGeral, simulador: this.biSimulador, segmentos: this.biSegmentos, pagamentos: this.biPagamentos, rankings: this.biRankings, pesquisa: this.biPesquisa, rentab: this.biRentab })[t].call(this);
     if (t === 'pesquisa') this.biCompara();
     if (t === 'simulador') this.simRecalc();
   } catch (e) {
@@ -5785,75 +5645,6 @@ Modules.biGeral = function () {
   </div>`;
 };
 
-/* ---- VENDAS CRUZADAS ---- */
-Modules.biCross = function () {
-  const items = BI.prods().map(p => ({ sku: p.sku, nome: p.nome }));
-  MSelect.setup('cross', items, () => Modules.biCrossRender());
-  setTimeout(() => { MSelect.mount('cross'); Modules.biCrossRender(); }, 20);
-  return `
-  <div class="card" style="margin-bottom:16px"><div class="section-title">Análise de produtos relacionados</div>
-    <p class="muted" style="line-height:1.6;margin-bottom:14px">Selecione um ou mais produtos para descobrir o que vende junto, com frequência e percentual de ocorrência. Sem seleção, mostramos os principais padrões automáticos.</p>
-    <div class="toolbar" style="margin-bottom:4px">
-      <select id="cross-per" onchange="Modules.biCrossRender()">${periodOptsHtml('all')}</select>
-      <span id="cross-custom" style="display:none;gap:8px;align-items:center"><input type="date" id="cross-de" onchange="Modules.biCrossRender()"><span class="muted">até</span><input type="date" id="cross-ate" onchange="Modules.biCrossRender()"></span>
-    </div>
-    ${MSelect.html('cross', 'Buscar e selecionar produtos (ex: PS5, Switch...)')}
-  </div>
-  <div id="cross-res"></div>`;
-};
-Modules.biCrossRender = function () {
-  const host = document.getElementById('cross-res'); if (!host) return;
-  const per = fval('cross-per') || 'all';
-  const cc = document.getElementById('cross-custom'); if (cc) cc.style.display = per === 'custom' ? 'inline-flex' : 'none';
-  const vendas = per === 'all' ? BI.vendas() : BI.vendasPeriodo(per, fval('cross-de'), fval('cross-ate'));
-  const sel = MSelect.selected('cross');
-  if (!sel.length) {
-    const anchors = BI.crossSell(vendas).slice(0, 6);
-    host.innerHTML = anchors.length ? `<p class="muted" style="margin-bottom:12px">Padrões automáticos (selecione produtos acima para análise detalhada):</p>` + anchors.map(an => biCrossCard({ nome: an.nome, orders: an.orders, comps: an.comps.map(c => ({ nome: c.nome, count: c.count, pct: an.orders ? c.count / an.orders * 100 : 0 })) }, true)).join('') : '<div class="empty-state"><div class="big">🔗</div>Ainda não há vendas com vários itens neste período para detectar padrões.</div>';
-    return;
-  }
-  const cf = BI.crossFor(sel, vendas);
-  let html = '';
-  if (sel.length >= 2) html += biComparador(sel, vendas);
-  sel.forEach(sku => html += biCrossCard(cf[sku], false));
-  if (sel.length >= 2) html += biIntersection(sel, cf);
-  host.innerHTML = html;
-};
-function biCrossCard(an, isAuto) {
-  if (!an) return '';
-  const comps = (an.comps || []).slice(0, 7);
-  return `<div class="cross-card">
-    <div class="cross-anchor"><span class="ca-ico">🎮</span><div><div>${esc(an.nome)}</div><div class="muted" style="font-size:11.5px;font-weight:500">${an.orders} venda(s) com este produto${isAuto ? ' · padrão automático' : ''}</div></div></div>
-    ${comps.length ? comps.map(c => `<div class="cross-comp"><span class="cc-per">${Math.round(c.pct)}%</span><div class="bi-main"><div class="bi-name">${esc(c.nome)}</div><div class="bi-bartrack" style="margin-top:5px"><div class="bi-barfill" style="width:${Math.min(100, c.pct)}%"></div></div></div><span class="badge b-gray">${c.count}x juntos</span></div>`).join('') : '<p class="muted">Nenhum produto vendido junto neste período.</p>'}
-  </div>`;
-}
-function biComparador(skus, vendas) {
-  const agg = BI.agg(vendas), cf = BI.crossFor(skus, vendas);
-  const rows = skus.map(sku => {
-    const a = agg.find(x => x.sku === sku) || { nome: (BI.prodInfo(sku) || {}).nome || sku, qtd: 0, receita: 0, lucro: 0, margemV: 0, ticket: 0 };
-    const top = (cf[sku].comps || [])[0];
-    return { a, top };
-  });
-  return `<div class="card" style="margin-bottom:16px"><div class="section-title">⚔️ Comparação inteligente</div>
-    <div class="table-wrap" style="border:none"><table><thead><tr><th>Produto</th><th class="num">Qtd</th><th class="num">Receita</th><th class="num">Lucro</th><th class="num">Margem</th><th class="num">Ticket médio</th><th>Relacionado nº1</th></tr></thead>
-    <tbody>${rows.map(r => `<tr><td class="strong">${esc(r.a.nome)}</td><td class="num">${r.a.qtd}</td><td class="num">${Fmt.brl(r.a.receita)}</td><td class="num" style="color:var(--green)">${Fmt.brl(r.a.lucro)}</td><td class="num">${Fmt.pct(r.a.margemV)}</td><td class="num">${Fmt.brl(r.a.ticket)}</td><td>${r.top ? esc(r.top.nome) + ' <span class="muted">(' + Math.round(r.top.pct) + '%)</span>' : '—'}</td></tr>`).join('')}</tbody></table></div></div>`;
-}
-function biIntersection(skus, cf) {
-  const sets = skus.map(s => new Set((cf[s].comps || []).map(c => c.sku).filter(x => !skus.includes(x))));
-  const inter = [...(sets[0] || [])].filter(x => sets.every(st => st.has(x)));
-  const interRows = inter.map(sku => ({ nome: (BI.prodInfo(sku) || {}).nome || sku, count: skus.reduce((s, a) => { const c = (cf[a].comps || []).find(c => c.sku === sku); return s + (c ? c.count : 0); }, 0) })).sort((a, b) => b.count - a.count);
-  const excl = skus.map(s => {
-    const others = skus.filter(o => o !== s);
-    const ex = (cf[s].comps || []).filter(c => !skus.includes(c.sku) && !others.some(o => (cf[o].comps || []).some(cc => cc.sku === c.sku)));
-    return { nome: cf[s].nome, comps: ex.slice(0, 5) };
-  });
-  return `<div class="grid cols-2">
-    <div class="card"><div class="section-title">🤝 Vendidos junto com TODOS os selecionados</div>
-      ${interRows.length ? interRows.map(r => `<div class="bi-row"><div class="bi-main"><div class="bi-name">${esc(r.nome)}</div></div><span class="badge b-green">${r.count}x</span></div>`).join('') : '<p class="muted">Nenhum produto em comum entre os selecionados.</p>'}</div>
-    <div class="card"><div class="section-title">⭐ Exclusivos de cada produto</div>
-      ${excl.map(e => `<div style="margin-bottom:12px"><div class="strong" style="font-size:13px;margin-bottom:5px">${esc(e.nome)}</div>${e.comps.length ? e.comps.map(c => `<div class="bi-sub" style="padding:2px 0">• ${esc(c.nome)} <span class="muted">(${c.count}x)</span></div>`).join('') : '<div class="muted" style="font-size:12px">— nenhum companheiro exclusivo</div>'}</div>`).join('')}</div>
-  </div>`;
-}
 
 /* ---- RANKINGS ---- */
 Modules.biRankings = function () {
@@ -5915,44 +5706,7 @@ Modules.biCompara = function () {
     <tbody>${rows.map(x => `<tr><td class="strong">${esc(x.nome)}</td><td class="num">${x.qtd}</td><td class="num">${Fmt.brl(x.receita)}</td><td class="num muted">${Fmt.brl(x.custo)}</td><td class="num" style="color:var(--green)">${Fmt.brl(x.lucro)}</td><td class="num">${Fmt.pct(x.margemV)}</td><td class="num">${Fmt.pct(x.margemC)}</td><td class="num">${Fmt.brl(x.qtd ? x.receita / x.qtd : 0)}</td></tr>`).join('')}</tbody></table></div>`;
 };
 
-/* ---- CATEGORIAS ---- */
-Modules.biCategorias = function () {
-  const a = BI.agg();
-  const grp = (keyFn) => { const m = {}; a.forEach(x => { const k = keyFn(x); m[k] = m[k] || { nome: k, qtd: 0, receita: 0, custo: 0, lucro: 0 }; m[k].qtd += x.qtd; m[k].receita += x.receita; m[k].custo += x.custo; m[k].lucro += x.lucro; }); return Object.values(m).sort((x, y) => y.receita - x.receita); };
-  const cats = grp(x => x.categoria), conds = grp(x => x.condicao);
-  const maxR = Math.max(1, ...cats.map(c => c.receita));
-  const tbl = (arr) => `<div class="table-wrap" style="border:none"><table><thead><tr><th>Categoria</th><th class="num">Qtd</th><th class="num">Faturam.</th><th class="num">Lucro</th><th class="num">Margem</th></tr></thead>
-    <tbody>${arr.map(c => `<tr><td class="strong">${esc(c.nome)}</td><td class="num">${c.qtd}</td><td class="num">${Fmt.brl(c.receita)}</td><td class="num" style="color:var(--green)">${Fmt.brl(c.lucro)}</td><td class="num"><span class="badge b-green">${Fmt.pct(c.receita ? c.lucro / c.receita * 100 : 0)}</span></td></tr>`).join('')}</tbody></table></div>`;
-  return `
-  <div class="card" style="margin-bottom:16px"><div class="section-title">Faturamento por categoria</div>
-    ${cats.map(c => `<div style="margin-bottom:13px"><div style="display:flex;justify-content:space-between;font-size:13px"><span class="strong">${esc(c.nome)}</span><span>${Fmt.brl(c.receita)} · ${c.qtd} un · ${Fmt.pct(c.receita ? c.lucro / c.receita * 100 : 0)} margem</span></div><div class="bi-bartrack" style="height:8px;margin-top:6px"><div class="bi-barfill" style="width:${c.receita / maxR * 100}%"></div></div></div>`).join('')}
-  </div>
-  <div class="grid cols-2b">
-    <div class="card"><div class="section-title">Por categoria</div>${tbl(cats)}</div>
-    <div class="card"><div class="section-title">Por condição (novo / seminovo / usado)</div>${tbl(conds)}</div>
-  </div>`;
-};
 
-/* ---- TENDÊNCIAS ---- */
-Modules.biTendencias = function () {
-  const p = this.biState.trend;
-  return `<div class="card"><div class="section-title" style="align-items:center">Tendência de vendas
-    <div class="period-tabs">${[['dia', 'Diária'], ['semana', 'Semanal'], ['mes', 'Mensal'], ['ano', 'Anual']].map(o => `<button class="${p === o[0] ? 'active' : ''}" onclick="Modules.biSetTrend('${o[0]}')">${o[1]}</button>`).join('')}</div>
-  </div>${this.biTrendChart(p)}</div>`;
-};
-Modules.biSetTrend = function (t) { this.biState.trend = t; this.biRender(); };
-Modules.biTrendChart = function (modo) {
-  const vendas = BI.vendas(); const now = new Date();
-  let buckets = [];
-  const add = (label, ini, fim) => { const tot = vendas.filter(v => { const d = new Date(v.data); return d >= ini && d < fim; }).reduce((s, v) => s + v.total, 0); buckets.push({ label, tot }); };
-  if (modo === 'dia') { for (let i = 13; i >= 0; i--) { const d = new Date(now); d.setDate(d.getDate() - i); d.setHours(0, 0, 0, 0); const f = new Date(d); f.setDate(f.getDate() + 1); add(d.getDate() + '/' + (d.getMonth() + 1), d, f); } }
-  else if (modo === 'semana') { for (let i = 7; i >= 0; i--) { const d = new Date(now); d.setDate(d.getDate() - i * 7 - now.getDay()); d.setHours(0, 0, 0, 0); const f = new Date(d); f.setDate(f.getDate() + 7); add('S' + (8 - i), d, f); } }
-  else if (modo === 'mes') { const meses = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']; for (let i = 11; i >= 0; i--) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); const f = new Date(now.getFullYear(), now.getMonth() - i + 1, 1); add(meses[d.getMonth()] + '/' + String(d.getFullYear()).slice(2), d, f); } }
-  else { for (let i = 4; i >= 0; i--) { const y = now.getFullYear() - i; add('' + y, new Date(y, 0, 1), new Date(y + 1, 0, 1)); } }
-  const max = Math.max(1, ...buckets.map(b => b.tot));
-  return `<div class="trend-bars">${buckets.map(b => `<div class="tb-col"><div style="flex:1;display:flex;align-items:flex-end;width:100%"><div class="tb-bar" title="${Fmt.brl(b.tot)}" style="height:${Math.max(2, b.tot / max * 100)}%"></div></div><div class="tb-lbl">${b.label}</div></div>`).join('')}</div>
-  <p class="muted" style="margin-top:12px;font-size:12px">Total no período exibido: <b style="color:var(--green)">${Fmt.brl(buckets.reduce((s, b) => s + b.tot, 0))}</b></p>`;
-};
 
 /* ---- RENTABILIDADE ---- */
 Modules.biRentab = function () {
@@ -5976,46 +5730,6 @@ Modules.biRentab = function () {
     <tbody>${roi.map(x => `<tr><td>${esc(x.nome)}</td><td class="num" style="color:var(--green)">${Fmt.brl(x.lucro)}</td><td class="num muted">${Fmt.brl(x.invest)}</td><td class="num"><span class="badge ${x.roi >= 100 ? 'b-green' : 'b-amber'}">${x.roi >= 999 ? '∞' : Fmt.pct(x.roi)}</span></td></tr>`).join('')}</tbody></table></div></div>`;
 };
 
-/* ---- ESTOQUE ---- */
-Modules.biEstoque = function () {
-  const a = BI.agg(), ls = BI.lastSale(), now = Date.now();
-  const maisVend = a.slice().sort((x, y) => y.qtd - x.qtd).slice(0, 8);
-  const maisLucr = a.slice().sort((x, y) => y.lucro - x.lucro).slice(0, 8);
-  const parados = (typeof Calc !== 'undefined' ? Calc.produtosParados(60) : []);
-  const semGiro = BI.prods().filter(p => p.qtd > 0 && !ls[p.sku]);
-  const tempoMedio = (() => { const ps = BI.prods().filter(p => p.qtd > 0); return ps.length ? ps.reduce((s, p) => s + (now - new Date(p.criadoEm).getTime()) / 86400000, 0) / ps.length : 0; })();
-  const prods = BI.prods();
-  const fisico = prods.reduce((s, p) => s + (p.qtd || 0), 0);
-  const dispU = prods.reduce((s, p) => s + Math.max(0, (p.qtd || 0) - (p.reservado || 0) - (p.manutencao || 0)), 0);
-  const manutU = prods.reduce((s, p) => s + (p.manutencao || 0), 0);
-  const resU = prods.reduce((s, p) => s + (p.reservado || 0), 0);
-  const valManut = prods.reduce((s, p) => s + (p.custoMedio || p.custo || 0) * (p.manutencao || 0), 0);
-  return `
-  <div class="grid kpis" style="margin-bottom:16px">
-    ${kpi('Estoque físico total', Fmt.num(fisico), prods.length + ' SKUs', '📦', '')}
-    ${kpi('Disponível p/ venda', Fmt.num(dispU), null, '🟢', 'green')}
-    ${kpi('Em manutenção', Fmt.num(manutU), Fmt.brl(valManut) + ' investidos', '🟠', 'amber')}
-    ${kpi('Reservado', Fmt.num(resU), null, '🟡', 'blue')}
-  </div>
-  <div class="grid kpis" style="margin-bottom:16px">
-    ${kpi('Capital em estoque', Fmt.brl(prods.reduce((s, p) => s + (p.custoMedio || p.custo) * p.qtd, 0)), null, '💰', 'blue')}
-    ${kpi('Produtos parados (60d+)', Fmt.num(parados.length), null, '🐌', 'red')}
-    ${kpi('Tempo médio em estoque', Math.round(tempoMedio) + ' dias', null, '⏳', 'amber')}
-    ${kpi('SKUs sem giro', Fmt.num(semGiro.length), null, '📭', '')}
-  </div>
-  <div class="grid cols-2b" style="margin-bottom:16px">
-    <div class="card"><div class="section-title">🏆 Mais vendidos</div>${biRankRows(maisVend, x => x.qtd, x => Fmt.brl(x.receita) + ' em receita', x => x.qtd + ' un')}</div>
-    <div class="card"><div class="section-title">💎 Mais lucrativos</div>${biRankRows(maisLucr, x => x.lucro, x => x.qtd + ' un', x => Fmt.brl(x.lucro))}</div>
-  </div>
-  <div class="grid cols-2b">
-    <div class="card"><div class="section-title">🐌 Estoque parado (60+ dias)</div>
-      ${parados.length ? `<div class="table-wrap" style="border:none"><table><thead><tr><th>Produto</th><th>Cond.</th><th class="num">Qtd</th><th class="num">Capital</th></tr></thead><tbody>${parados.map(p => `<tr><td>${esc(p.nome)}</td><td>${condBadge(p.condicao)}</td><td class="num">${p.qtd}</td><td class="num">${Fmt.brl((p.custoMedio || p.custo) * p.qtd)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Nenhum produto parado. 🎉</p>'}
-    </div>
-    <div class="card"><div class="section-title">❄️ Sem giro (nunca vendidos)</div>
-      ${semGiro.length ? semGiro.slice(0, 10).map(p => `<div class="bi-row"><div class="bi-main"><div class="bi-name">${esc(p.nome)}</div><div class="bi-sub">${p.sku} · ${Math.round((now - new Date(p.criadoEm).getTime()) / 86400000)} dias em estoque</div></div><span class="muted">${p.qtd} un</span></div>`).join('') : '<p class="muted">Todos os produtos já venderam.</p>'}
-    </div>
-  </div>`;
-};
 
 /* ---- EXPORT ---- */
 Modules.biExport = function (fmt) {
@@ -6320,330 +6034,6 @@ Modules.biPagExport = function () {
   Exporter.xlsx('formas-pagamento-' + new Date().toISOString().slice(0, 10) + '.xlsx', 'Pagamentos', aoa);
 };
 
-/* ============ RELATÓRIO DE PRÉ-VENDAS ============ */
-Modules.biPrevendas = function () {
-  const all = DB.all('prevendas');
-  if (typeof PV === 'undefined') return '<div class="empty-state"><div class="big">📋</div>Módulo de pré-vendas indisponível.</div>';
-  const ativas = all.filter(p => !p.cancelado);
-  const canceladas = all.filter(p => p.cancelado);
-  const pagasAg = ativas.filter(p => !p.entregue && PV.restante(p) <= 0.009);   // pagas aguardando entrega
-  const parciais = ativas.filter(p => PV.pago(p) > 0 && PV.restante(p) > 0.009);
-  const pendentes = ativas.filter(p => PV.pago(p) <= 0.009 && !p.entregue);
-  const entregues = ativas.filter(p => p.entregue);
-  const totVendido = ativas.reduce((s, p) => s + (p.valorTotal || 0), 0);
-  const totRecebido = all.reduce((s, p) => s + (p.cancelado ? 0 : PV.pago(p)), 0);
-  const totPendente = ativas.filter(p => !p.entregue).reduce((s, p) => s + PV.restante(p), 0);
-
-  // produtos mais reservados
-  const rk = {};
-  ativas.forEach(p => { const k = p.produtoNome || '—'; rk[k] = rk[k] || { nome: k, qtd: 0, valor: 0 }; rk[k].qtd += (p.qtd || 1); rk[k].valor += (p.valorTotal || 0); });
-  const topProd = Object.values(rk).sort((a, b) => b.qtd - a.qtd).slice(0, 8);
-
-  const grupo = (titulo, arr, cor, ico) => `<div class="card" style="margin-bottom:14px">
-    <div class="section-title">${ico} ${titulo} <span class="badge ${cor}">${arr.length}</span></div>
-    ${arr.length ? `<div class="table-wrap"><table><thead><tr><th>Pedido</th><th>Cliente</th><th>Produto</th><th class="num">Total</th><th class="num">Pago</th><th class="num">Restante</th><th>Pagamento</th><th>Entrega</th></tr></thead>
-      <tbody>${arr.slice().sort((a, b) => (b.numero || 0) - (a.numero || 0)).map(p => `<tr>
-        <td class="strong">#${p.numero || '—'}</td><td>${esc(p.cliente)}</td><td>${esc(p.produtoNome)}</td>
-        <td class="num">${Fmt.brl(p.valorTotal)}</td><td class="num" style="color:var(--green)">${Fmt.brl(PV.pago(p))}</td>
-        <td class="num">${Fmt.brl(PV.restante(p))}</td><td>${PV.payBadge(p)}</td><td>${PV.entBadge(p)}</td></tr>`).join('')}</tbody></table></div>`
-      : '<p class="muted">Nenhum pedido nesta categoria.</p>'}</div>`;
-
-  return `
-  <div class="grid kpis" style="margin-bottom:16px">
-    ${kpi('Total em pré-venda', Fmt.brl(totVendido), ativas.length + ' reservas ativas', '📋', 'blue')}
-    ${kpi('Total recebido', Fmt.brl(totRecebido), 'já no financeiro', '💰', 'green')}
-    ${kpi('Total pendente', Fmt.brl(totPendente), 'a receber', '⏳', 'amber')}
-    ${kpi('Prontas p/ entrega', Fmt.num(pagasAg.length), 'pagas aguardando', '📦', 'purple')}
-  </div>
-  <div class="grid cols-2" style="margin-bottom:16px">
-    <div class="card"><div class="section-title">🏆 Produtos mais reservados</div>
-      ${topProd.length ? biRankRows(topProd, x => x.qtd, x => x.qtd + ' un reservadas', x => Fmt.brl(x.valor)) : '<p class="muted">Sem reservas ainda.</p>'}</div>
-    <div class="card"><div class="section-title">Resumo por situação</div>
-      <div class="mini-stat"><span>📦 Pagas aguardando entrega</span><b>${pagasAg.length}</b></div>
-      <div class="mini-stat"><span>💵 Parcialmente pagas</span><b>${parciais.length}</b></div>
-      <div class="mini-stat"><span>⏳ Pendentes (sem pagamento)</span><b>${pendentes.length}</b></div>
-      <div class="mini-stat"><span>✅ Entregues</span><b>${entregues.length}</b></div>
-      <div class="mini-stat"><span>🚫 Canceladas</span><b>${canceladas.length}</b></div>
-      <div style="margin-top:10px"><button class="btn-ghost btn-sm" onclick="Modules.biPrevExport()">⬇️ Exportar Excel</button></div></div>
-  </div>
-  ${grupo('Pagas — aguardando entrega', pagasAg, 'b-green', '📦')}
-  ${grupo('Parcialmente pagas', parciais, 'b-amber', '💵')}
-  ${grupo('Pendentes', pendentes, 'b-gray', '⏳')}
-  ${grupo('Entregues', entregues, 'b-blue', '✅')}
-  ${canceladas.length ? grupo('Canceladas', canceladas, 'b-gray', '🚫') : ''}`;
-};
-Modules.biPrevExport = function () {
-  const r2 = x => Math.round(x * 100) / 100;
-  const aoa = [['Rico Games — Pré-vendas / Reservas'], ['Gerado em', Fmt.date(new Date())], [],
-    ['Pedido', 'Cliente', 'Telefone', 'Produto', 'Qtd', 'Total', 'Pago', 'Restante', 'Status pagamento', 'Status entrega', 'Limite']];
-  DB.all('prevendas').slice().sort((a, b) => (b.numero || 0) - (a.numero || 0)).forEach(p => {
-    const ps = PV.PAY[PV.payStatus(p)] ? PV.PAY[PV.payStatus(p)][0] : '', es = PV.ENT[PV.entStatus(p)] ? PV.ENT[PV.entStatus(p)][0] : '';
-    aoa.push(['#' + (p.numero || ''), p.cliente, p.telefone || '', p.produtoNome, p.qtd, r2(p.valorTotal), r2(PV.pago(p)), r2(PV.restante(p)), ps, es, p.dataLimite || '']);
-  });
-  Exporter.xlsx('prevendas-rico-games-' + new Date().toISOString().slice(0, 10) + '.xlsx', 'Pre-vendas', aoa);
-};
-
-</script>
-  <script>
-/* ============ RICO GAMES ERP — Insights Inteligentes (consultor de negócios) ============
-   Analisa os dados REAIS do período selecionado e gera recomendações fundamentadas.
-   Cada insight informa: o que foi identificado · qual dado · por que importa · qual ação. */
-
-Modules.insightsData = function (ctx) {
-  const vendas = ctx.vendas, vprev = ctx.vprev, r = ctx.r;
-  const spanDays = Math.max(1, Math.round((r.end - r.start) / 86400000));
-  const a = BI.agg(vendas);                 // por produto no período
-  const aMap = {}; a.forEach(x => aMap[x.sku] = x);
-  const T = BI.totals(vendas), P = BI.totals(vprev);
-  const prods = BI.prods();
-  const ls = BI.lastSale();                  // última venda por sku (todo o histórico)
-  const now = Date.now();
-  const estValorTot = prods.reduce((s, p) => s + (p.custoMedio || p.custo || 0) * (p.qtd || 0), 0) || 1;
-  const lucroTot = a.reduce((s, x) => s + x.lucro, 0) || 1;
-  const cards = [];
-  const add = (pri, ico, titulo, oque, dado, porque, acao, score) => cards.push({ pri, ico, titulo, oque, dado, porque, acao, score: score || 0 });
-
-  /* ---- 1. Top produtos por LUCRO (não faturamento) ---- */
-  const topLucro = a.slice().filter(x => x.lucro > 0).sort((x, y) => y.lucro - x.lucro).slice(0, 10);
-
-  /* ---- 2. Margem baixa (< 8%) ---- */
-  const margemBaixa = a.filter(x => x.receita > 0 && x.margemV < 8).sort((x, y) => y.qtd - x.qtd).slice(0, 8);
-  margemBaixa.slice(0, 3).forEach(x => add('media', '📉', 'Margem baixa: ' + x.nome,
-    'Este produto vendeu com margem de apenas ' + Fmt.pct(x.margemV) + '.',
-    x.qtd + ' un vendidas · lucro ' + Fmt.brl(x.lucro) + ' · receita ' + Fmt.brl(x.receita),
-    'Margens abaixo de 8% quase não sobram depois das taxas e despesas.',
-    'Reveja o preço de venda ou negocie um custo menor com o fornecedor.', 100 - x.margemV));
-
-  /* ---- 3. Produtos parados ---- */
-  const parados = prods.filter(p => (p.qtd || 0) > 0).map(p => {
-    const last = ls[p.sku]; const dias = last ? Math.round((now - last) / 86400000) : 999;
-    return { p, dias, valor: (p.custoMedio || p.custo || 0) * p.qtd };
-  }).filter(x => x.dias >= 60).sort((x, y) => y.valor - x.valor);
-  const paradosValor = parados.reduce((s, x) => s + x.valor, 0);
-  const parados90 = parados.filter(x => x.dias >= 90);
-  parados.slice(0, 3).forEach(x => add('alta', '🐌', 'Parado: ' + x.p.nome,
-    'Está há ' + (x.dias >= 999 ? 'muito tempo (nunca vendeu)' : x.dias + ' dias') + ' sem vender.',
-    x.p.qtd + ' un em estoque · ' + Fmt.brl(x.valor) + ' imobilizados',
-    'Produto parado é dinheiro preso que poderia estar girando.',
-    'Faça promoção, reduza o preço, destaque nas redes sociais ou combine com um produto que gira.', x.valor));
-
-  /* ---- 4. Campeões ---- */
-  const campQtd = a.slice().sort((x, y) => y.qtd - x.qtd).slice(0, 5);
-  const campFat = a.slice().sort((x, y) => y.receita - x.receita).slice(0, 5);
-  const campLucro = topLucro.slice(0, 5);
-
-  /* ---- 5/6. Vendem juntos / venda cruzada ---- */
-  const cross = (typeof BI.crossSell === 'function') ? BI.crossSell(vendas).slice(0, 6) : [];
-  cross.filter(c => c.comps.length && c.orders >= 2).slice(0, 2).forEach(c => {
-    const top = c.comps[0]; const pct = c.orders ? Math.round(top.count / c.orders * 100) : 0;
-    if (pct >= 40) add('op', '🔗', 'Vende junto: ' + c.nome,
-      pct + '% de quem levou ' + c.nome + ' também levou ' + top.nome + '.',
-      c.orders + ' vendas com ' + c.nome + ' · ' + top.count + ' junto com ' + top.nome,
-      'Combos aumentam o ticket médio sem custo de aquisição de cliente.',
-      'Ofereça ' + top.nome + ' sempre que vender ' + c.nome + ' (combo/desconto casado).', pct);
-  });
-
-  /* ---- 7. Reposição (dias de estoque) ---- */
-  const reposicao = a.filter(x => x.qtd > 0).map(x => {
-    const p = BI.prodInfo(x.sku); if (!p || p.qtd <= 0) return null;
-    const mediaDia = x.qtd / spanDays; const diasEstoque = mediaDia > 0 ? p.qtd / mediaDia : Infinity;
-    return { nome: x.nome, sku: x.sku, estoque: p.qtd, mediaDia, mediaSem: mediaDia * 7, diasEstoque };
-  }).filter(Boolean).filter(x => isFinite(x.diasEstoque)).sort((x, y) => x.diasEstoque - y.diasEstoque);
-  reposicao.filter(x => x.diasEstoque <= 10).slice(0, 3).forEach(x => add('alta', '📦', 'Vai faltar: ' + x.nome,
-    'Restam cerca de ' + Math.round(x.diasEstoque) + ' dias de estoque.',
-    x.estoque + ' un em estoque · venda média ' + x.mediaSem.toFixed(1) + '/semana',
-    'Ruptura de estoque de item que gira = venda perdida.',
-    'Reponha ' + x.nome + ' antes de acabar.', 100 - x.diasEstoque));
-
-  /* ---- 8. Merecem promoção (parado + margem boa + estoque alto) ---- */
-  const margemMin = 10;
-  const promocao = parados.map(x => aMap[x.p.sku] || { margemV: (x.p.preco - (x.p.custoMedio || x.p.custo)) / (x.p.preco || 1) * 100 })
-    .map((ag, i) => ({ x: parados[i], margem: (parados[i].p.preco - (parados[i].p.custoMedio || parados[i].p.custo)) / (parados[i].p.preco || 1) * 100 }))
-    .filter(o => o.margem > margemMin + 5 && o.x.p.qtd >= 2);
-  promocao.slice(0, 2).forEach(o => { const espaco = Math.max(0, Math.floor(o.margem - margemMin));
-    add('op', '🏷️', 'Promoção possível: ' + o.x.p.nome,
-      'Está parado, tem estoque (' + o.x.p.qtd + ' un) e margem de ' + Fmt.pct(o.margem) + '.',
-      'Margem atual ' + Fmt.pct(o.margem) + ' · margem mínima ' + margemMin + '%',
-      'Dá para acelerar a venda sem operar no prejuízo.',
-      'Conceda até ' + espaco + '% de desconto (ainda acima da margem mínima) para girar o estoque.', espaco); });
-
-  /* ---- 9. Vale comprar de novo (giro rápido + margem acima da média) ---- */
-  const margemMedia = T.margemV;
-  const recompra = a.filter(x => x.qtd >= 2 && x.margemV >= margemMedia).map(x => {
-    const p = BI.prodInfo(x.sku); const est = p ? p.qtd : 0; return { x, est };
-  }).sort((u, v) => v.x.lucro - u.x.lucro);
-  recompra.filter(o => o.est <= (BI.prodInfo(o.x.sku) || {}).min * 2).slice(0, 2).forEach(o => add('op', '🟢', 'Comprar de novo: ' + o.x.nome,
-    'Girou rápido (' + o.x.qtd + ' un no período) com margem ' + Fmt.pct(o.x.margemV) + ', acima da média (' + Fmt.pct(margemMedia) + ').',
-    'Lucro no período ' + Fmt.brl(o.x.lucro) + ' · estoque atual ' + o.est + ' un',
-    'Produto que vende rápido e com boa margem é onde vale reinvestir.',
-    'Reabasteça ' + o.x.nome + ' — tende a vender de novo com boa margem.', o.x.lucro));
-
-  /* ---- 10. Não compensam (muito estoque, pouco lucro) ---- */
-  const naoCompensa = prods.filter(p => p.qtd > 0).map(p => {
-    const ag = aMap[p.sku] || { lucro: 0 };
-    const stockShare = (p.custoMedio || p.custo || 0) * p.qtd / estValorTot * 100;
-    const profitShare = ag.lucro / lucroTot * 100;
-    return { p, stockShare, profitShare, ag };
-  }).filter(o => o.stockShare >= 5 && o.stockShare > o.profitShare * 2).sort((u, v) => (v.stockShare - v.profitShare) - (u.stockShare - u.profitShare));
-  naoCompensa.slice(0, 2).forEach(o => add('media', '⚠️', 'Não compensa: ' + o.p.nome,
-    'Representa ' + Fmt.pct(o.stockShare) + ' do seu estoque, mas só ' + Fmt.pct(Math.max(0, o.profitShare)) + ' do lucro.',
-    o.p.qtd + ' un · ' + Fmt.brl((o.p.custoMedio || o.p.custo) * o.p.qtd) + ' imobilizados',
-    'Muito capital preso gerando pouco retorno.',
-    'Reduza a exposição: promoção, queima ou pare de repor.', o.stockShare));
-
-  /* ---- 11. Evolução da empresa ---- */
-  const vari = (cur, prev) => prev ? (cur - prev) / Math.abs(prev) * 100 : (cur ? 100 : 0);
-  if (ctx.st.periodo !== 'all' && (P.receita > 0 || P.nv > 0)) {
-    const dFat = vari(T.receita, P.receita), dLucro = vari(T.lucroLiq, P.lucroLiq), dTicket = vari(T.ticket, P.ticket);
-    if (dFat <= -10) add('alta', '📉', 'Vendas em queda',
-      'O faturamento caiu ' + Fmt.pct(Math.abs(dFat)) + ' em relação ao período anterior.',
-      'Atual ' + Fmt.brl(T.receita) + ' vs anterior ' + Fmt.brl(P.receita),
-      'Queda de receita afeta todo o resultado da loja.',
-      'Reforce divulgação, revise preços e foque nos produtos campeões.', Math.abs(dFat));
-    else if (dFat >= 10) add('op', '📈', 'Vendas em alta',
-      'O faturamento cresceu ' + Fmt.pct(dFat) + ' vs o período anterior.',
-      'Atual ' + Fmt.brl(T.receita) + ' vs anterior ' + Fmt.brl(P.receita),
-      'Momento bom para aproveitar a demanda.',
-      'Garanta estoque dos itens que estão puxando o crescimento.', dFat);
-    if (dLucro <= -10) add('alta', '💸', 'Lucro em queda',
-      'O lucro líquido caiu ' + Fmt.pct(Math.abs(dLucro)) + ' vs o período anterior.',
-      'Atual ' + Fmt.brl(T.lucroLiq) + ' vs anterior ' + Fmt.brl(P.lucroLiq),
-      'Queda de lucro pode indicar custos/taxas subindo ou descontos demais.',
-      'Verifique margens, taxas e descontos concedidos.', Math.abs(dLucro));
-    if (Math.abs(dTicket) >= 8) add(dTicket >= 0 ? 'op' : 'media', '🎟️', 'Ticket médio ' + (dTicket >= 0 ? 'subindo' : 'caindo'),
-      'O ticket médio ' + (dTicket >= 0 ? 'subiu' : 'caiu') + ' ' + Fmt.pct(Math.abs(dTicket)) + '.',
-      'Atual ' + Fmt.brl(T.ticket) + ' vs anterior ' + Fmt.brl(P.ticket),
-      'Ticket é o quanto cada cliente gasta em média.',
-      dTicket >= 0 ? 'Continue incentivando combos e vendas casadas.' : 'Estimule vendas casadas (console + acessório) para elevar o ticket.', Math.abs(dTicket));
-  }
-
-  /* ---- 12. Eficiência das formas de pagamento ---- */
-  let pay = null, refRate = 0, economia = 0;
-  if (typeof BI.payAgg === 'function') {
-    pay = BI.payAgg(vendas); refRate = BI.refCardRate ? BI.refCardRate() : 0;
-    const semTaxa = (pay.list.find(x => x.key === 'PIX') || { valor: 0 }).valor + (pay.list.find(x => x.key === 'Dinheiro') || { valor: 0 }).valor;
-    economia = semTaxa * refRate / 100;
-    const pctTaxaLucro = T.lucro ? pay.totTaxa / T.lucro * 100 : 0;
-    if (pay.totTaxa > 0) add(pctTaxaLucro > 20 ? 'media' : 'op', '💳', 'Taxas consumindo o lucro',
-      'As taxas de cartão comeram ' + Fmt.pct(pctTaxaLucro) + ' do seu lucro bruto no período.',
-      'Taxas ' + Fmt.brl(pay.totTaxa) + ' · lucro bruto ' + Fmt.brl(T.lucro),
-      'Cada real em taxa sai direto da sua margem.',
-      'Incentive PIX/dinheiro nas vendas à vista.', pctTaxaLucro);
-    if (economia > 0) add('op', '💚', 'PIX e dinheiro economizam taxa',
-      'Vendas em PIX/dinheiro evitaram cerca de ' + Fmt.brl(economia) + ' em taxas.',
-      'Base sem taxa ' + Fmt.brl(semTaxa) + ' · taxa de cartão de referência ' + Fmt.pct(refRate),
-      'É lucro que fica na loja em vez de ir para a operadora.',
-      'Ofereça um pequeno desconto no PIX — ainda sai mais barato que a taxa do cartão.', economia);
-  }
-
-  /* ---- 13. Produtos usados ---- */
-  const usados = a.filter(x => (x.condicao === 'usado')).map(x => {
-    const p = BI.prodInfo(x.sku); const roi = x.custo ? x.lucro / x.custo * 100 : 0;
-    const criado = p && p.criadoEm ? new Date(p.criadoEm).getTime() : null; const vend = ls[x.sku] ? ls[x.sku] : null;
-    const tempo = (criado && vend) ? Math.max(0, Math.round((vend - criado) / 86400000)) : null;
-    return { nome: x.nome, qtd: x.qtd, lucro: x.lucro, margem: x.margemV, roi, tempo };
-  }).sort((u, v) => v.lucro - u.lucro);
-  if (usados.length) { const u0 = usados[0];
-    add('op', '🔄', 'Usados dão bom retorno',
-      'Usados mais lucrativo: ' + u0.nome + ' (ROI ' + Fmt.pct(u0.roi) + ').',
-      usados.reduce((s, u) => s + u.qtd, 0) + ' usados vendidos · lucro ' + Fmt.brl(usados.reduce((s, u) => s + u.lucro, 0)),
-      'Usados costumam ter margem/ROI melhores que produto novo.',
-      'Aumente a captação de usados como ' + u0.nome + ' na avaliação/troca.', u0.lucro);
-  }
-
-  /* ---- 14. Pré-vendas ---- */
-  let prevRk = [], pvPend = 0, pvClientes = 0;
-  if (typeof PV !== 'undefined') {
-    const ativas = DB.all('prevendas').filter(p => !p.cancelado);
-    const vp = (PV.vendaPendentes ? PV.vendaPendentes() : []);
-    const rk = {};
-    ativas.forEach(p => { const k = p.produtoNome || '—'; rk[k] = rk[k] || { nome: k, qtd: 0, valor: 0 }; rk[k].qtd += p.qtd || 1; rk[k].valor += p.valorTotal || 0; });
-    vp.forEach(o => { const k = o.it.nome; rk[k] = rk[k] || { nome: k, qtd: 0, valor: 0 }; rk[k].qtd += o.it.qtd || 1; rk[k].valor += (o.it.preco * o.it.qtd) || 0; });
-    prevRk = Object.values(rk).sort((x, y) => y.qtd - x.qtd).slice(0, 6);
-    pvPend = ativas.filter(p => !p.entregue).reduce((s, p) => s + PV.restante(p), 0);
-    pvClientes = ativas.filter(p => !p.entregue).length + vp.length;
-    if (prevRk.length) add('op', '📋', 'Produtos mais aguardados',
-      'Mais reservado: ' + prevRk[0].nome + ' (' + prevRk[0].qtd + ' reserva(s)).',
-      pvClientes + ' cliente(s) aguardando · ' + Fmt.brl(pvPend) + ' ainda a receber',
-      'Demanda garantida antes de o produto chegar.',
-      'Priorize a chegada de ' + prevRk[0].nome + ' e avise os clientes na retirada.', prevRk[0].qtd);
-  }
-
-  /* ---- 15. Alertas inteligentes adicionais ---- */
-  if (parados90.length) add('alta', '🚨', parados90.length + ' produto(s) parado(s) há +90 dias',
-    'Há ' + parados90.length + ' produtos sem vender há mais de 90 dias.',
-    Fmt.brl(parados90.reduce((s, x) => s + x.valor, 0)) + ' imobilizados nesses itens',
-    'Estoque velho perde valor e ocupa capital.',
-    'Defina uma ação de queima para esses itens neste mês.', 999);
-  const baixoEstoque = prods.filter(p => (p.qtd || 0) - (p.reservado || 0) - (p.manutencao || 0) <= p.min && p.qtd >= 0 && Modules.disp(p) >= 0);
-  // contas
-  const cPagar = (typeof Calc !== 'undefined' && Calc.contasPagar) ? Calc.contasPagar() : 0;
-  const cReceber = (typeof Calc !== 'undefined' && Calc.contasReceber) ? Calc.contasReceber() : 0;
-
-  return { cards, topLucro, margemBaixa, parados, paradosValor, campQtd, campFat, campLucro, cross, reposicao, promocao, recompra, naoCompensa, usados, prevRk, pvPend, pvClientes, T, P, pay, refRate, economia, cPagar, cReceber, spanDays, estValorTot };
-};
-
-Modules.biInsights = function () {
-  const ctx = this.biRangeCtx();
-  if (!ctx.vendas.length && !BI.prods().length) return '<div class="empty-state"><div class="big">🧠</div>Sem dados suficientes para gerar insights. Registre vendas e produtos.</div>';
-  const D = this.insightsData(ctx);
-  const per = ctx.label;
-  const byPri = p => D.cards.filter(c => c.pri === p).sort((a, b) => b.score - a.score);
-  const alta = byPri('alta'), media = byPri('media'), op = byPri('op');
-
-  const cardHtml = c => `<div class="ins-card ${c.pri}">
-    <div class="ins-h">${c.ico} <b>${esc(c.titulo)}</b></div>
-    <div class="ins-oque">${esc(c.oque)}</div>
-    <div class="ins-meta"><span class="ins-tag">📊 Dado</span> ${esc(c.dado)}</div>
-    <div class="ins-meta"><span class="ins-tag">❓ Por quê</span> ${esc(c.porque)}</div>
-    <div class="ins-acao">✅ <b>Ação:</b> ${esc(c.acao)}</div>
-  </div>`;
-
-  // Resumo executivo
-  const exOp = op.slice(0, 5), exRisco = alta.concat(media).slice(0, 5);
-  const exLucr = D.campLucro.slice(0, 5), exPre = D.naoCompensa.concat(D.margemBaixa.map(x => ({ p: { nome: x.nome }, motivo: 'margem ' + Fmt.pct(x.margemV) }))).slice(0, 5);
-  const liItem = (t, s) => `<div class="ex-li"><div class="ex-t">${esc(t)}</div>${s ? `<div class="ex-s">${esc(s)}</div>` : ''}</div>`;
-  const exec = `<div class="grid cols-2" style="margin-bottom:16px">
-    <div class="card ex-op"><div class="section-title">🟢 5 principais oportunidades</div>${exOp.length ? exOp.map(c => liItem(c.titulo, c.acao)).join('') : '<p class="muted">Sem oportunidades destacadas no período.</p>'}</div>
-    <div class="card ex-risk"><div class="section-title">🔴 5 principais riscos</div>${exRisco.length ? exRisco.map(c => liItem(c.titulo, c.oque)).join('') : '<p class="muted">Nenhum risco relevante. 🎉</p>'}</div>
-  </div>
-  <div class="grid cols-2" style="margin-bottom:16px">
-    <div class="card"><div class="section-title">💎 5 produtos mais lucrativos</div>${exLucr.length ? exLucr.map(x => liItem(x.nome, x.qtd + ' un · lucro ' + Fmt.brl(x.lucro) + ' · margem ' + Fmt.pct(x.margemV))).join('') : '<p class="muted">Sem vendas no período.</p>'}</div>
-    <div class="card"><div class="section-title">⚠️ 5 produtos mais preocupantes</div>${exPre.length ? exPre.map(x => liItem(x.p ? x.p.nome : x.nome, x.motivo || (x.stockShare ? Fmt.pct(x.stockShare) + ' do estoque / ' + Fmt.pct(Math.max(0, x.profitShare || 0)) + ' do lucro' : ''))).join('') : '<p class="muted">Nada preocupante. 🎉</p>'}</div>
-  </div>`;
-
-  // tabelas de apoio
-  const tblLucro = D.topLucro.length ? `<div class="card" style="margin-bottom:16px"><div class="section-title">💰 Top 10 produtos por lucro líquido <span class="muted" style="font-weight:500">· ${esc(per)}</span></div>
-    <div class="table-wrap"><table><thead><tr><th>Produto</th><th class="num">Qtd</th><th class="num">Receita</th><th class="num">Lucro</th><th class="num">Margem</th></tr></thead>
-    <tbody>${D.topLucro.map(x => `<tr><td class="strong">${esc(x.nome)}</td><td class="num">${x.qtd}</td><td class="num">${Fmt.brl(x.receita)}</td><td class="num strong" style="color:var(--green)">${Fmt.brl(x.lucro)}</td><td class="num">${Fmt.pct(x.margemV)}</td></tr>`).join('')}</tbody></table></div></div>` : '';
-
-  const tblRepo = D.reposicao.filter(x => x.diasEstoque <= 30).length ? `<div class="card" style="margin-bottom:16px"><div class="section-title">📦 Reposição — dias de estoque restantes</div>
-    <div class="table-wrap"><table><thead><tr><th>Produto</th><th class="num">Estoque</th><th class="num">Média/semana</th><th class="num">Dias restantes</th></tr></thead>
-    <tbody>${D.reposicao.filter(x => x.diasEstoque <= 30).slice(0, 10).map(x => `<tr><td class="strong">${esc(x.nome)}</td><td class="num">${x.estoque}</td><td class="num">${x.mediaSem.toFixed(1)}</td><td class="num strong" style="color:${x.diasEstoque <= 7 ? 'var(--red)' : x.diasEstoque <= 14 ? 'var(--amber)' : 'var(--txt)'}">${Math.round(x.diasEstoque)} dias</td></tr>`).join('')}</tbody></table></div></div>` : '';
-
-  const tblCross = D.cross.filter(c => c.comps.length).length ? `<div class="card" style="margin-bottom:16px"><div class="section-title">🔗 Compram juntos (venda cruzada)</div>
-    ${D.cross.filter(c => c.comps.length).slice(0, 5).map(c => `<div class="bi-row"><div class="bi-main"><div class="bi-name">${esc(c.nome)}</div><div class="bi-sub">${c.comps.slice(0, 3).map(k => esc(k.nome) + ' (' + Math.round(c.orders ? k.count / c.orders * 100 : 0) + '%)').join(' · ')}</div></div><span class="badge b-gray">${c.orders} vendas</span></div>`).join('')}</div>` : '';
-
-  const tblUsados = D.usados.length ? `<div class="card" style="margin-bottom:16px"><div class="section-title">🔄 Produtos usados — rentabilidade</div>
-    <div class="table-wrap"><table><thead><tr><th>Produto</th><th class="num">Qtd</th><th class="num">Lucro</th><th class="num">Margem</th><th class="num">ROI</th><th class="num">Tempo p/ vender</th></tr></thead>
-    <tbody>${D.usados.slice(0, 8).map(u => `<tr><td class="strong">${esc(u.nome)}</td><td class="num">${u.qtd}</td><td class="num" style="color:var(--green)">${Fmt.brl(u.lucro)}</td><td class="num">${Fmt.pct(u.margem)}</td><td class="num strong">${Fmt.pct(u.roi)}</td><td class="num">${u.tempo != null ? u.tempo + ' dias' : '—'}</td></tr>`).join('')}</tbody></table></div></div>` : '';
-
-  const tblPrev = D.prevRk.length ? `<div class="card" style="margin-bottom:16px"><div class="section-title">📋 Pré-vendas — mais aguardados</div>
-    <div class="muted" style="font-size:12px;margin-bottom:8px">${D.pvClientes} cliente(s) aguardando · ${Fmt.brl(D.pvPend)} ainda a receber</div>
-    ${biRankRows(D.prevRk, x => x.qtd, x => x.qtd + ' reserva(s)', x => Fmt.brl(x.valor))}</div>` : '';
-
-  return `
-  <div class="bi-periodhead">🧠 Insights do período: <b>${esc(per)}</b> · analisando vendas, estoque, margens, pagamentos, usados e pré-vendas com base nos dados reais.</div>
-  <div class="section-title" style="margin:0 0 10px">📌 Resumo Executivo</div>
-  ${exec}
-  <div class="section-title" style="margin:6px 0 10px">🚦 Insights por prioridade</div>
-  ${alta.length ? `<div class="ins-group-title alta">🔴 Alta prioridade (${alta.length})</div><div class="ins-grid">${alta.map(cardHtml).join('')}</div>` : ''}
-  ${media.length ? `<div class="ins-group-title media">🟡 Média prioridade (${media.length})</div><div class="ins-grid">${media.map(cardHtml).join('')}</div>` : ''}
-  ${op.length ? `<div class="ins-group-title op">🟢 Oportunidades (${op.length})</div><div class="ins-grid">${op.map(cardHtml).join('')}</div>` : ''}
-  ${(!alta.length && !media.length && !op.length) ? '<div class="card"><p class="muted">Sem insights acionáveis no período selecionado. Experimente um período maior.</p></div>' : ''}
-  <div class="section-title" style="margin:16px 0 10px">📈 Análises detalhadas</div>
-  ${tblLucro}${tblRepo}${tblCross}${tblUsados}${tblPrev}`;
-};
 
 </script>
   <script>
@@ -7145,7 +6535,7 @@ const Theme = {
 
 /* ============ RICO GAMES ERP — Permissões ============ */
 const PERM_DEFAULT_FUNC = {
-  modules: { dashboard: false, vendasDia: true, pdv: true, caixa: true, estoque: true, entrada: false, compras: false, fornecedores: false, usados: false, trocas: false, prevendas: true, movimentacoes: false, garantias: false, financeiro: false, relatorios: false, config: false },
+  modules: { dashboard: false, vendasDia: true, pdv: true, caixa: true, estoque: true, entrada: false, compras: false, usados: false, trocas: false, prevendas: true, movimentacoes: false, garantias: false, financeiro: false, relatorios: false, config: false },
   verFinanceiro: false, podeCancelar: false, podeDesconto: true, podeEditarProduto: true, podeSangria: true, podeAlterarPreco: false
 };
 
@@ -7153,7 +6543,7 @@ const PERM_DEFAULT_FUNC = {
 const App = {
   titles: {
     dashboard: 'Dashboard', vendasDia: 'Vendas do Dia', pdv: 'PDV — Ponto de Venda', caixa: 'Caixa da Loja', estoque: 'Estoque', entrada: 'Entrada de Estoque',
-    compras: 'Compras', fornecedores: 'Fornecedores', usados: 'Avaliação de Usados',
+    compras: 'Compras', usados: 'Receber Usado',
     trocas: 'Trocas e Usados', prevendas: 'Pré-venda / Reservas', movimentacoes: 'Movimentações', garantias: 'Garantias',
     financeiro: 'Financeiro', relatorios: 'Relatórios', config: 'Configurações'
   },
@@ -7252,7 +6642,7 @@ const App = {
   canModule(route) { if (this.isAdmin()) return true; const p = this.perms(); return !!(p.modules && p.modules[route]); },
   canFinance() { if (this.isAdmin()) return true; return !!this.perms().verFinanceiro; },
   can(action) { if (this.isAdmin()) return true; return !!this.perms()[action]; },
-  firstRoute() { return this.isAdmin() ? 'dashboard' : (['pdv', 'vendasDia', 'caixa', 'estoque', 'compras', 'fornecedores', 'usados', 'trocas', 'movimentacoes', 'garantias', 'financeiro', 'relatorios'].find(r => this.canModule(r)) || 'pdv'); },
+  firstRoute() { return this.isAdmin() ? 'dashboard' : (['pdv', 'vendasDia', 'caixa', 'estoque', 'compras', 'usados', 'trocas', 'movimentacoes', 'garantias', 'financeiro', 'relatorios'].find(r => this.canModule(r)) || 'pdv'); },
   applyAccess() {
     document.querySelectorAll('.nav-item[data-route]').forEach(a => { a.style.display = this.canModule(a.dataset.route) ? '' : 'none'; });
     const u = this.user() || { nome: 'Administrador', role: 'admin' };
