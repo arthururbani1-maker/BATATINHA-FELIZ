@@ -474,6 +474,18 @@ td .muted,.muted{color:var(--txt-3)}
 .ex-li{padding:8px 0;border-bottom:1px solid var(--line-soft,rgba(128,128,128,.12))}
 .ex-t{font-weight:600;font-size:13px} .ex-s{font-size:11.5px;color:var(--txt-2);margin-top:2px}
 
+/* ===== Análise por segmento ===== */
+.seg-chip{display:inline-block;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--line);border-radius:20px;padding:5px 12px;color:var(--txt-2);background:var(--bg-2)}
+.seg-chip:hover{border-color:var(--accent,#5b8cff);color:var(--accent,#5b8cff)}
+.seg-chip.on{background:var(--accent,#5b8cff);color:#fff;border-color:var(--accent,#5b8cff)}
+.seg-bar{margin-bottom:9px}
+.seg-bar-t{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;margin-bottom:4px}
+.seg-inds{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.seg-ind{background:var(--bg-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.seg-ind-l{font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--txt-2)}
+.seg-ind-v{font-size:13.5px;font-weight:700;margin-top:3px}
+.seg-ind-s{font-size:11.5px;color:var(--txt-2);margin-top:1px}
+
 </style>
   <script>
     /* Aplica o tema o quanto antes para evitar "flash" ao carregar */
@@ -545,7 +557,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.3.1 · modo econômico</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.4 · análise por segmento</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -5588,7 +5600,7 @@ function periodOptsHtml(sel) { return [['all', 'Todo o período'], ['hoje', 'Hoj
 
 Modules.biState = { tab: 'geral', trend: 'dia', sel: [], periodo: '30d', de: '', ate: '' };
 Modules.relatorios = function () {
-  const tabs = [['geral', '📊 Visão geral'], ['insights', '🧠 Insights'], ['pagamentos', '💳 Formas de pagamento'], ['prevendas', '📋 Pré-vendas'], ['cross', '🔗 Vendas cruzadas'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['categorias', '🗂️ Categorias'], ['tendencias', '📈 Tendências'], ['rentab', '💎 Rentabilidade'], ['estoque', '📦 Estoque']];
+  const tabs = [['geral', '📊 Visão geral'], ['insights', '🧠 Insights'], ['segmentos', '🧩 Segmentos'], ['pagamentos', '💳 Formas de pagamento'], ['prevendas', '📋 Pré-vendas'], ['cross', '🔗 Vendas cruzadas'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['categorias', '🗂️ Categorias'], ['tendencias', '📈 Tendências'], ['rentab', '💎 Rentabilidade'], ['estoque', '📦 Estoque']];
   const st = this.biState, r = BI.range(st.periodo, st.de, st.ate);
   setTimeout(() => Modules.biRender(), 20);
   return `
@@ -5638,14 +5650,14 @@ Modules.biRangeCtx = function () {
 Modules.biInit = function () { this.biRender(); };
 Modules.biSetTab = function (t) {
   this.biState.tab = t;
-  const keys = ['geral', 'insights', 'pagamentos', 'prevendas', 'cross', 'rankings', 'pesquisa', 'categorias', 'tendencias', 'rentab', 'estoque'];
+  const keys = ['geral', 'insights', 'segmentos', 'pagamentos', 'prevendas', 'cross', 'rankings', 'pesquisa', 'categorias', 'tendencias', 'rentab', 'estoque'];
   document.querySelectorAll('#bi-subnav .tab').forEach((el, i) => el.classList.toggle('active', keys[i] === t));
   this.biRender();
 };
 Modules.biRender = function () {
   const b = document.getElementById('bi-body'); if (!b) return;
   const t = this.biState.tab;
-  b.innerHTML = ({ geral: this.biGeral, insights: this.biInsights, pagamentos: this.biPagamentos, prevendas: this.biPrevendas, cross: this.biCross, rankings: this.biRankings, pesquisa: this.biPesquisa, categorias: this.biCategorias, tendencias: this.biTendencias, rentab: this.biRentab, estoque: this.biEstoque })[t].call(this);
+  b.innerHTML = ({ geral: this.biGeral, insights: this.biInsights, segmentos: this.biSegmentos, pagamentos: this.biPagamentos, prevendas: this.biPrevendas, cross: this.biCross, rankings: this.biRankings, pesquisa: this.biPesquisa, categorias: this.biCategorias, tendencias: this.biTendencias, rentab: this.biRentab, estoque: this.biEstoque })[t].call(this);
   if (t === 'pesquisa') this.biCompara();
 };
 
@@ -6588,6 +6600,223 @@ Modules.biInsights = function () {
   ${(!alta.length && !media.length && !op.length) ? '<div class="card"><p class="muted">Sem insights acionáveis no período selecionado. Experimente um período maior.</p></div>' : ''}
   <div class="section-title" style="margin:16px 0 10px">📈 Análises detalhadas</div>
   ${tblLucro}${tblRepo}${tblCross}${tblUsados}${tblPrev}`;
+};
+
+</script>
+  <script>
+/* ============ RICO GAMES ERP — Análise por Segmento ============
+   Agrupa produtos (por categoria, condição e/ou palavra-chave) e analisa o grupo:
+   custo médio PONDERADO, investimento, faturamento, lucro, indicadores, gráficos e comparação.
+   Respeita o período global selecionado nos Relatórios. */
+
+Modules.segState = { cat: '', cond: '', kw: '', compare: [] };
+
+/* Motor: calcula tudo de um segmento no período */
+Modules.segData = function (seg, ctx) {
+  const kw = (seg.kw || '').toLowerCase();
+  const prods = BI.prods().filter(p =>
+    (!seg.cat || p.categoria === seg.cat) &&
+    (!seg.cond || p.condicao === seg.cond) &&
+    (!kw || (p.nome + ' ' + (p.sku || '') + ' ' + (p.marca || '') + ' ' + (p.modelo || '')).toLowerCase().includes(kw)));
+  const skuMap = {}; prods.forEach(p => { if (p.sku) skuMap[p.sku] = p; });
+  // vendas do período: por produto, com rateio de taxa
+  const sales = {}; const vendaIds = {};
+  (ctx.vendas || []).forEach(v => {
+    const taxaV = v.taxaTotal != null ? v.taxaTotal : (typeof Taxas !== 'undefined' ? Taxas.feeVenda(v) : 0);
+    const base = (v.itens || []).reduce((s, i) => s + i.preco * i.qtd, 0);
+    (v.itens || []).forEach(i => {
+      if (!skuMap[i.sku]) return;
+      const valor = i.preco * i.qtd;
+      const custoU = (i.custo > 0) ? i.custo : (skuMap[i.sku].custoMedio || skuMap[i.sku].custo || 0);
+      const custo = custoU * i.qtd, taxaItem = base > 0 ? taxaV * (valor / base) : 0;
+      const s = sales[i.sku] = sales[i.sku] || { qtd: 0, receita: 0, custo: 0, taxa: 0 };
+      s.qtd += i.qtd; s.receita += valor; s.custo += custo; s.taxa += taxaItem;
+      vendaIds[v.id] = 1;
+    });
+  });
+  const ls = BI.lastSale ? BI.lastSale() : {}; const now = Date.now();
+  // linhas por produto
+  const rows = prods.map(p => {
+    const s = sales[p.sku] || { qtd: 0, receita: 0, custo: 0, taxa: 0 };
+    const lucroBruto = s.receita - s.custo, lucroLiq = lucroBruto - s.taxa;
+    const custoMedio = p.custoMedio || p.custo || 0;
+    const last = ls[p.sku], dias = last ? Math.round((now - last) / 86400000) : (p.qtd > 0 ? 999 : null);
+    return {
+      sku: p.sku, nome: p.nome, condicao: p.condicao, estoque: p.qtd || 0, custoMedio, preco: p.preco || 0,
+      invest: custoMedio * (p.qtd || 0), valorVenda: (p.preco || 0) * (p.qtd || 0),
+      qtdVend: s.qtd, faturamento: s.receita, custoVend: s.custo, taxa: s.taxa, lucroBruto, lucroLiq,
+      margemV: s.receita ? lucroBruto / s.receita * 100 : 0, margemC: s.custo ? lucroBruto / s.custo * 100 : 0,
+      dias, giro: (p.qtd || 0) + s.qtd ? s.qtd / ((p.qtd || 0) + s.qtd) : 0
+    };
+  });
+  // totais do segmento
+  const estoqueQtd = rows.reduce((a, x) => a + x.estoque, 0);
+  const invest = rows.reduce((a, x) => a + x.invest, 0);
+  const valorVenda = rows.reduce((a, x) => a + x.valorVenda, 0);
+  const qtdVend = rows.reduce((a, x) => a + x.qtdVend, 0);
+  const faturamento = rows.reduce((a, x) => a + x.faturamento, 0);
+  const custoVend = rows.reduce((a, x) => a + x.custoVend, 0);
+  const taxas = rows.reduce((a, x) => a + x.taxa, 0);
+  const lucroBruto = faturamento - custoVend, lucroLiq = lucroBruto - taxas;
+  const custoMedioPond = estoqueQtd ? invest / estoqueQtd : 0;       // PONDERADO pelas quantidades
+  const precoMedioPond = estoqueQtd ? valorVenda / estoqueQtd : 0;
+  const T = {
+    nProdutos: prods.length, estoqueQtd, invest, valorVenda, custoMedioPond, precoMedioPond,
+    margemEstoque: precoMedioPond ? (precoMedioPond - custoMedioPond) / precoMedioPond * 100 : 0,
+    qtdVend, faturamento, lucroBruto, lucroLiq, taxas,
+    margemVenda: faturamento ? lucroLiq / faturamento * 100 : 0,
+    nVendas: Object.keys(vendaIds).length, ticket: Object.keys(vendaIds).length ? faturamento / Object.keys(vendaIds).length : 0,
+    giro: estoqueQtd ? qtdVend / estoqueQtd : qtdVend
+  };
+  // indicadores
+  const vend = rows.filter(x => x.qtdVend > 0);
+  const ind = {
+    maisVendido: vend.slice().sort((a, b) => b.qtdVend - a.qtdVend)[0],
+    maisLucrativo: vend.slice().sort((a, b) => b.lucroLiq - a.lucroLiq)[0],
+    maiorMargem: vend.slice().sort((a, b) => b.margemV - a.margemV)[0],
+    menorMargem: vend.slice().sort((a, b) => a.margemV - b.margemV)[0],
+    parado: rows.filter(x => x.estoque > 0 && x.dias != null).sort((a, b) => b.dias - a.dias)[0],
+    maiorGiro: vend.slice().sort((a, b) => b.giro - a.giro)[0]
+  };
+  return { prods, rows, T, ind, skuMap };
+};
+
+Modules.segLabel = function (seg) {
+  const parts = [];
+  if (seg.cat) parts.push(seg.cat);
+  if (seg.cond) parts.push(seg.cond);
+  if (seg.kw) parts.push('“' + seg.kw + '”');
+  return parts.length ? parts.join(' · ') : 'Todos os produtos';
+};
+
+Modules.biSegmentos = function () {
+  const cats = DB.all('categorias').map(c => c.nome);
+  const st = this.segState, ctx = this.biRangeCtx();
+  const D = this.segData(st, ctx);
+  const T = D.T, per = ctx.label, label = this.segLabel(st);
+  // barras "por produto" (top N)
+  const bar = (arr, valFn, fmt, cor) => {
+    const items = arr.filter(x => valFn(x) > 0).sort((a, b) => valFn(b) - valFn(a)).slice(0, 10);
+    if (!items.length) return '<p class="muted">Sem dados.</p>';
+    const max = Math.max(1, ...items.map(valFn));
+    return items.map(x => `<div class="seg-bar"><div class="seg-bar-t"><span>${esc(x.nome)}</span><b>${fmt(valFn(x))}</b></div><div class="bi-bartrack"><div class="bi-barfill" style="width:${valFn(x) / max * 100}%;background:${cor || 'var(--accent,#5b8cff)'}"></div></div></div>`).join('');
+  };
+  // evolução do segmento (reusa gráfico adaptativo, com o valor só dos itens do segmento)
+  const segVendas = (ctx.vendas || []).map(v => ({ data: v.data, total: (v.itens || []).filter(i => D.skuMap[i.sku]).reduce((s, i) => s + i.preco * i.qtd, 0) })).filter(x => x.total > 0);
+  const evol = (typeof biEvolChart === 'function') ? biEvolChart(segVendas, ctx.r) : '';
+  const indCard = (t, x, sub) => `<div class="seg-ind"><div class="seg-ind-l">${t}</div>${x ? `<div class="seg-ind-v">${esc(x.nome)}</div><div class="seg-ind-s">${sub(x)}</div>` : '<div class="seg-ind-v muted">—</div>'}</div>`;
+
+  return `
+  <div class="card" style="margin-bottom:16px"><div class="section-title">🧩 Análise por segmento</div>
+    <p class="muted" style="margin-bottom:10px;line-height:1.5">Agrupe produtos por categoria, condição e/ou palavra-chave no nome (ex.: categoria <b>Jogos</b> + palavra <b>PS4</b> = "Jogos PS4"). O custo médio é sempre <b>ponderado</b> pelas quantidades.</p>
+    <div class="toolbar" style="gap:8px;flex-wrap:wrap">
+      <select id="seg-cat" onchange="Modules.segApply()"><option value="">Todas categorias</option>${cats.map(c => `<option ${st.cat === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+      <select id="seg-cond" onchange="Modules.segApply()"><option value="">Toda condição</option><option value="novo" ${st.cond === 'novo' ? 'selected' : ''}>Novo</option><option value="seminovo" ${st.cond === 'seminovo' ? 'selected' : ''}>Seminovo</option><option value="usado" ${st.cond === 'usado' ? 'selected' : ''}>Usado</option></select>
+      <input id="seg-kw" placeholder="Palavra-chave (ex: PS4, Switch, DualSense)" value="${esc(st.kw)}" oninput="Modules.segApplyDelay()" class="grow">
+      ${App.canFinance() ? '<button class="btn-ghost btn-sm" onclick="Modules.segExport(\'xlsx\')">⬇️ Excel</button><button class="btn-ghost btn-sm" onclick="Modules.segExport(\'pdf\')">🖨️ PDF</button>' : ''}
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">${cats.slice(0, 8).map(c => `<span class="seg-chip" onclick="Modules.segQuick('cat','${esc(c)}')">${esc(c)}</span>`).join('')}
+      <span class="seg-chip" onclick="Modules.segQuick('cond','novo')">Novos</span><span class="seg-chip" onclick="Modules.segQuick('cond','seminovo')">Seminovos</span><span class="seg-chip" onclick="Modules.segQuick('cond','usado')">Usados</span>
+      <span class="seg-chip" onclick="Modules.segQuick('clear','')">✕ limpar</span></div>
+  </div>
+
+  <div class="bi-periodhead">🧩 Segmento: <b>${esc(label)}</b> · ${D.prods.length} produto(s) · período <b>${esc(per)}</b></div>
+
+  <div class="grid kpis" style="margin-bottom:14px">
+    ${kpi('Produtos no segmento', Fmt.num(T.nProdutos), T.estoqueQtd + ' un em estoque', '📦', 'blue')}
+    ${kpi('Investido no estoque', Fmt.brl(T.invest), 'a preço de custo', '💰', '')}
+    ${kpi('Valor de venda do estoque', Fmt.brl(T.valorVenda), 'se vender tudo', '🏷️', '')}
+    ${kpi('Custo médio (ponderado)', Fmt.brl(T.custoMedioPond), 'por unidade', '⚖️', 'amber')}
+  </div>
+  <div class="grid kpis" style="margin-bottom:14px">
+    ${kpi('Preço médio de venda', Fmt.brl(T.precoMedioPond), 'margem estoque ' + Fmt.pct(T.margemEstoque), '🎟️', '')}
+    ${kpi('Vendido no período', Fmt.num(T.qtdVend) + ' un', T.nVendas + ' venda(s)', '🛒', 'blue')}
+    ${kpi('Faturamento', Fmt.brl(T.faturamento), 'ticket ' + Fmt.brl(T.ticket), '💵', '')}
+    ${kpi('Lucro líquido', Fmt.brl(T.lucroLiq), 'bruto ' + Fmt.brl(T.lucroBruto) + ' · margem ' + Fmt.pct(T.margemVenda), '💎', 'purple')}
+  </div>
+
+  <div class="card" style="margin-bottom:16px"><div class="section-title">🥇 Destaques do segmento</div>
+    <div class="seg-inds">
+      ${indCard('Mais vendido', D.ind.maisVendido, x => x.qtdVend + ' un')}
+      ${indCard('Mais lucrativo', D.ind.maisLucrativo, x => Fmt.brl(x.lucroLiq))}
+      ${indCard('Maior margem', D.ind.maiorMargem, x => Fmt.pct(x.margemV))}
+      ${indCard('Menor margem', D.ind.menorMargem, x => Fmt.pct(x.margemV))}
+      ${indCard('Maior giro', D.ind.maiorGiro, x => x.qtdVend + ' un / ' + x.estoque + ' est')}
+      ${indCard('Parado há mais tempo', D.ind.parado, x => (x.dias >= 999 ? 'nunca vendeu' : x.dias + ' dias'))}
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px"><div class="section-title">📈 Evolução das vendas do segmento <span class="muted" style="font-weight:500">· ${esc(per)}</span></div>${evol || '<p class="muted">Sem vendas no período.</p>'}</div>
+
+  <div class="grid cols-2" style="margin-bottom:16px">
+    <div class="card"><div class="section-title">📦 Estoque por produto</div>${bar(D.rows, x => x.estoque, v => v + ' un', '#0ea5e9')}</div>
+    <div class="card"><div class="section-title">🛒 Vendidos por produto</div>${bar(D.rows, x => x.qtdVend, v => v + ' un', '#6366f1')}</div>
+    <div class="card"><div class="section-title">💵 Faturamento por produto</div>${bar(D.rows, x => x.faturamento, v => Fmt.brl(v), '#22c55e')}</div>
+    <div class="card"><div class="section-title">💎 Lucro líquido por produto</div>${bar(D.rows, x => x.lucroLiq, v => Fmt.brl(v), '#a855f7')}</div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px"><div class="section-title">Produtos do segmento (${D.rows.length})</div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Produto</th><th class="num">Estoque</th><th class="num">Custo méd.</th><th class="num">Preço</th><th class="num">Vend.</th><th class="num">Faturado</th><th class="num">Lucro bruto</th><th class="num">Lucro líq.</th><th class="num">Marg. venda</th><th class="num">Marg. custo</th></tr></thead>
+      <tbody>${D.rows.slice().sort((a, b) => b.faturamento - a.faturamento).map(x => `<tr>
+        <td class="strong">${esc(x.nome)} ${condBadge(x.condicao)}</td>
+        <td class="num">${x.estoque}</td><td class="num">${Fmt.brl(x.custoMedio)}</td><td class="num">${Fmt.brl(x.preco)}</td>
+        <td class="num">${x.qtdVend}</td><td class="num">${Fmt.brl(x.faturamento)}</td>
+        <td class="num">${Fmt.brl(x.lucroBruto)}</td><td class="num strong" style="color:${x.lucroLiq >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(x.lucroLiq)}</td>
+        <td class="num">${x.qtdVend ? Fmt.pct(x.margemV) : '—'}</td><td class="num">${x.qtdVend ? Fmt.pct(x.margemC) : '—'}</td></tr>`).join('') || '<tr><td colspan="10" class="muted" style="text-align:center;padding:24px">Nenhum produto neste segmento.</td></tr>'}</tbody>
+      <tfoot><tr style="font-weight:700;border-top:2px solid var(--line)"><td>TOTAL</td><td class="num">${T.estoqueQtd}</td><td class="num">${Fmt.brl(T.custoMedioPond)}</td><td class="num">${Fmt.brl(T.precoMedioPond)}</td><td class="num">${T.qtdVend}</td><td class="num">${Fmt.brl(T.faturamento)}</td><td class="num">${Fmt.brl(T.lucroBruto)}</td><td class="num" style="color:var(--green)">${Fmt.brl(T.lucroLiq)}</td><td class="num">${Fmt.pct(T.margemVenda)}</td><td></td></tr></tfoot>
+    </table></div>
+  </div>
+
+  ${this.segComparacao(ctx)}`;
+};
+
+Modules.segComparacao = function (ctx) {
+  const cats = DB.all('categorias').map(c => c.nome);
+  const opts = cats.map(c => ({ id: 'cat:' + c, nome: c, seg: { cat: c } }))
+    .concat([{ id: 'cond:novo', nome: 'Novos', seg: { cond: 'novo' } }, { id: 'cond:seminovo', nome: 'Seminovos', seg: { cond: 'seminovo' } }, { id: 'cond:usado', nome: 'Usados', seg: { cond: 'usado' } }]);
+  const sel = this.segState.compare || [];
+  const chips = opts.map(o => `<span class="seg-chip ${sel.includes(o.id) ? 'on' : ''}" onclick="Modules.segToggleCompare('${o.id}')">${esc(o.nome)}</span>`).join('');
+  let tabela = '<p class="muted">Selecione 2 ou mais segmentos acima para comparar.</p>';
+  if (sel.length >= 2) {
+    const dados = sel.map(id => { const o = opts.find(x => x.id === id); return { nome: o.nome, D: this.segData(o.seg, ctx) }; });
+    tabela = `<div class="table-wrap"><table><thead><tr><th>Métrica</th>${dados.map(d => `<th class="num">${esc(d.nome)}</th>`).join('')}</tr></thead><tbody>
+      ${[['Estoque (un)', d => Fmt.num(d.D.T.estoqueQtd)], ['Investido', d => Fmt.brl(d.D.T.invest)], ['Custo médio', d => Fmt.brl(d.D.T.custoMedioPond)], ['Vendidos (un)', d => Fmt.num(d.D.T.qtdVend)], ['Faturamento', d => Fmt.brl(d.D.T.faturamento)], ['Lucro bruto', d => Fmt.brl(d.D.T.lucroBruto)], ['Lucro líquido', d => Fmt.brl(d.D.T.lucroLiq)], ['Margem venda', d => Fmt.pct(d.D.T.margemVenda)], ['Giro', d => d.D.T.giro.toFixed(2) + 'x'], ['Ticket médio', d => Fmt.brl(d.D.T.ticket)]]
+        .map(([lbl, fn]) => `<tr><td class="strong">${lbl}</td>${dados.map(d => `<td class="num">${fn(d)}</td>`).join('')}</tr>`).join('')}
+    </tbody></table></div>`;
+  }
+  return `<div class="card"><div class="section-title">⚖️ Comparar segmentos</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${chips}</div>${tabela}</div>`;
+};
+
+Modules.segApply = function () { this.segState.cat = fval('seg-cat'); this.segState.cond = fval('seg-cond'); this.segState.kw = fval('seg-kw'); this.biRender(); };
+Modules.segApplyDelay = function () { clearTimeout(this._segT); this._segT = setTimeout(() => { this.segState.kw = fval('seg-kw'); this.biRender(); }, 450); };
+Modules.segQuick = function (tipo, val) {
+  if (tipo === 'clear') this.segState = { cat: '', cond: '', kw: '', compare: this.segState.compare };
+  else if (tipo === 'cat') this.segState.cat = (this.segState.cat === val ? '' : val);
+  else if (tipo === 'cond') this.segState.cond = (this.segState.cond === val ? '' : val);
+  this.biRender();
+};
+Modules.segToggleCompare = function (id) {
+  const s = this.segState.compare || [];
+  this.segState.compare = s.includes(id) ? s.filter(x => x !== id) : s.concat([id]);
+  this.biRender();
+};
+Modules.segExport = function (fmt) {
+  const ctx = this.biRangeCtx(), D = this.segData(this.segState, ctx), r2 = x => Math.round(x * 100) / 100;
+  const label = this.segLabel(this.segState), T = D.T;
+  if (fmt === 'xlsx') {
+    const aoa = [['Rico Games — Análise por segmento'], ['Segmento', label], ['Período', ctx.label], [],
+      ['Produtos', T.nProdutos], ['Estoque (un)', T.estoqueQtd], ['Investido', r2(T.invest)], ['Custo médio ponderado', r2(T.custoMedioPond)], ['Preço médio', r2(T.precoMedioPond)], ['Vendidos', T.qtdVend], ['Faturamento', r2(T.faturamento)], ['Lucro bruto', r2(T.lucroBruto)], ['Lucro líquido', r2(T.lucroLiq)], ['Margem venda %', r2(T.margemVenda)], [],
+      ['Produto', 'Condição', 'Estoque', 'Custo méd', 'Preço', 'Vendidos', 'Faturamento', 'Lucro bruto', 'Lucro líq', 'Margem venda %', 'Margem custo %']];
+    D.rows.forEach(x => aoa.push([x.nome, x.condicao, x.estoque, r2(x.custoMedio), r2(x.preco), x.qtdVend, r2(x.faturamento), r2(x.lucroBruto), r2(x.lucroLiq), r2(x.margemV), r2(x.margemC)]));
+    Exporter.xlsx('segmento-' + label.replace(/[^\w]+/g, '-').slice(0, 30) + '.xlsx', 'Segmento', aoa);
+  } else {
+    const kp = (l, v) => `<div class="k"><div class="l">${l}</div><div class="v">${v}</div></div>`;
+    const kpis = `<div class="kpis">${kp('Investido', Fmt.brl(T.invest))}${kp('Custo médio', Fmt.brl(T.custoMedioPond))}${kp('Faturamento', Fmt.brl(T.faturamento))}${kp('Lucro líquido', Fmt.brl(T.lucroLiq))}${kp('Margem', Fmt.pct(T.margemVenda))}</div>`;
+    const rows = D.rows.map(x => `<tr><td>${esc(x.nome)}</td><td class="num">${x.estoque}</td><td class="num">${Fmt.brl(x.custoMedio)}</td><td class="num">${x.qtdVend}</td><td class="num">${Fmt.brl(x.faturamento)}</td><td class="num">${Fmt.brl(x.lucroLiq)}</td></tr>`).join('');
+    Exporter.pdf('Segmento: ' + label + ' · ' + ctx.label, kpis + `<table><thead><tr><th>Produto</th><th class="num">Estoque</th><th class="num">Custo méd</th><th class="num">Vend.</th><th class="num">Faturado</th><th class="num">Lucro líq</th></tr></thead><tbody>${rows}</tbody></table>`);
+  }
 };
 
 </script>
