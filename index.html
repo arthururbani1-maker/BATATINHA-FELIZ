@@ -496,6 +496,33 @@ td .muted,.muted{color:var(--txt-3)}
 .seg-roi-bal{margin-top:12px;padding:11px 14px;border-radius:10px;font-size:14px;background:var(--bg-2);border:1px solid var(--line)}
 .seg-roi-bal.pos{border-left:4px solid var(--green)} .seg-roi-bal.neg{border-left:4px solid var(--red)}
 
+/* ===== Simulador Comercial ===== */
+.sim-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:820px){.sim-grid{grid-template-columns:1fr}}
+.sim-drop{position:relative;background:var(--bg-2);border:1px solid var(--border);border-radius:10px;margin-top:6px;max-height:0;overflow:hidden;transition:max-height .15s}
+.sim-drop.show{max-height:320px;overflow:auto}
+.sim-item{background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.sim-item-h{display:flex;align-items:center;gap:6px;font-size:13.5px}
+.sim-rm{margin-left:auto;cursor:pointer;color:var(--red);opacity:.7;padding:0 4px}
+.sim-rm:hover{opacity:1}
+.sim-item-cfg{display:flex;gap:8px;align-items:flex-end;margin-top:8px;flex-wrap:wrap}
+.sim-item-cfg label{display:flex;flex-direction:column;font-size:11px;color:var(--txt-3);gap:3px}
+.sim-item-cfg input,.sim-item-cfg select{padding:6px 8px;font-size:13px}
+.sim-cmp{background:var(--bg-1);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
+.sim-cmp-h{font-weight:700;font-size:14px;margin-bottom:10px}
+.sim-cmp-cols{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:560px){.sim-cmp-cols{grid-template-columns:1fr}}
+.sim-col{background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:11px 13px}
+.sim-col.promo{border-color:var(--accent)}
+.sim-col.win{outline:2px solid var(--green);outline-offset:-1px}
+.sim-col-t{font-size:11.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--txt-3);margin-bottom:8px;font-weight:700}
+.sim-line{display:flex;justify-content:space-between;font-size:13px;padding:3px 0}
+.sim-line span{color:var(--txt-2)}
+.sim-diff{margin-top:10px;padding:8px 11px;border-radius:8px;font-size:12.5px;background:var(--bg-2)}
+.sim-diff.pos{color:var(--green);background:color-mix(in srgb,var(--green) 10%,transparent)}
+.sim-diff.neg{color:var(--red);background:color-mix(in srgb,var(--red) 10%,transparent)}
+.sim-verdict{margin-top:12px;padding:10px 13px;border-radius:9px;background:color-mix(in srgb,var(--accent) 12%,transparent);font-size:13.5px;text-align:center}
+
 </style>
   <script>
     /* Aplica o tema o quanto antes para evitar "flash" ao carregar */
@@ -567,7 +594,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.5.1 · relatório à prova de erro</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.6 · simulador comercial</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -617,7 +644,7 @@ const DB = (function () {
   const COLLECTIONS = [
     'produtos', 'categorias', 'marcas', 'fornecedores', 'compras',
     'vendas', 'avaliacoes', 'trocas', 'movimentacoes', 'garantias',
-    'financeiro', 'caixa', 'fechamentos', 'taxas', 'usuarios', 'modelosUsados', 'prevendas', 'config'
+    'financeiro', 'caixa', 'fechamentos', 'taxas', 'usuarios', 'modelosUsados', 'prevendas', 'cenarios', 'config'
   ];
   let state = null;
 
@@ -885,7 +912,7 @@ const DB = (function () {
       produtos: [], categorias, marcas, fornecedores: [], compras: [], vendas: [],
       avaliacoes: [], trocas: [], movimentacoes: [],
       garantias: [], financeiro: [], caixa: [], fechamentos: [], taxas,
-      modelosUsados: [], prevendas: [],
+      modelosUsados: [], prevendas: [], cenarios: [],
       usuarios: [],
       config: [{
         id: 'cfg', loja: 'Rico Games', cnpj: '', garantiaPadraoNovo: 365, garantiaPadraoUsado: 90,
@@ -5610,7 +5637,7 @@ function periodOptsHtml(sel) { return [['all', 'Todo o período'], ['hoje', 'Hoj
 
 Modules.biState = { tab: 'geral', trend: 'dia', sel: [], periodo: '30d', de: '', ate: '' };
 Modules.relatorios = function () {
-  const tabs = [['geral', '📊 Visão geral'], ['insights', '🧠 Insights'], ['segmentos', '🧩 Segmentos'], ['pagamentos', '💳 Formas de pagamento'], ['prevendas', '📋 Pré-vendas'], ['cross', '🔗 Vendas cruzadas'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['categorias', '🗂️ Categorias'], ['tendencias', '📈 Tendências'], ['rentab', '💎 Rentabilidade'], ['estoque', '📦 Estoque']];
+  const tabs = [['geral', '📊 Visão geral'], ['insights', '🧠 Insights'], ['simulador', '🧮 Simulador'], ['segmentos', '🧩 Segmentos'], ['pagamentos', '💳 Formas de pagamento'], ['prevendas', '📋 Pré-vendas'], ['cross', '🔗 Vendas cruzadas'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['categorias', '🗂️ Categorias'], ['tendencias', '📈 Tendências'], ['rentab', '💎 Rentabilidade'], ['estoque', '📦 Estoque']];
   const st = this.biState, r = BI.range(st.periodo, st.de, st.ate);
   setTimeout(() => Modules.biRender(), 20);
   return `
@@ -5660,7 +5687,7 @@ Modules.biRangeCtx = function () {
 Modules.biInit = function () { this.biRender(); };
 Modules.biSetTab = function (t) {
   this.biState.tab = t;
-  const keys = ['geral', 'insights', 'segmentos', 'pagamentos', 'prevendas', 'cross', 'rankings', 'pesquisa', 'categorias', 'tendencias', 'rentab', 'estoque'];
+  const keys = ['geral', 'insights', 'simulador', 'segmentos', 'pagamentos', 'prevendas', 'cross', 'rankings', 'pesquisa', 'categorias', 'tendencias', 'rentab', 'estoque'];
   document.querySelectorAll('#bi-subnav .tab').forEach((el, i) => el.classList.toggle('active', keys[i] === t));
   this.biRender();
 };
@@ -5668,8 +5695,9 @@ Modules.biRender = function () {
   const b = document.getElementById('bi-body'); if (!b) return;
   const t = this.biState.tab;
   try {
-    b.innerHTML = ({ geral: this.biGeral, insights: this.biInsights, segmentos: this.biSegmentos, pagamentos: this.biPagamentos, prevendas: this.biPrevendas, cross: this.biCross, rankings: this.biRankings, pesquisa: this.biPesquisa, categorias: this.biCategorias, tendencias: this.biTendencias, rentab: this.biRentab, estoque: this.biEstoque })[t].call(this);
+    b.innerHTML = ({ geral: this.biGeral, insights: this.biInsights, simulador: this.biSimulador, segmentos: this.biSegmentos, pagamentos: this.biPagamentos, prevendas: this.biPrevendas, cross: this.biCross, rankings: this.biRankings, pesquisa: this.biPesquisa, categorias: this.biCategorias, tendencias: this.biTendencias, rentab: this.biRentab, estoque: this.biEstoque })[t].call(this);
     if (t === 'pesquisa') this.biCompara();
+    if (t === 'simulador') this.simRecalc();
   } catch (e) {
     console.error('Erro ao gerar relatório', t, e);
     b.innerHTML = '<div class="empty-state"><div class="big">⚠️</div>Não foi possível gerar este relatório.<br><small style="color:var(--txt-3)">' + esc(String(e && e.message || e)) + '</small><br><button class="btn-ghost btn-sm" style="margin-top:12px" onclick="Modules.biSetTab(\'geral\')">← Voltar à Visão geral</button></div>';
@@ -6861,6 +6889,224 @@ Modules.segExport = function (fmt) {
     const kpis = `<div class="kpis">${kp('Investido', Fmt.brl(T.invest))}${kp('Custo médio', Fmt.brl(T.custoMedioPond))}${kp('Faturamento', Fmt.brl(T.faturamento))}${kp('Lucro líquido', Fmt.brl(T.lucroLiq))}${kp('Margem', Fmt.pct(T.margemVenda))}</div>`;
     const rows = D.rows.map(x => `<tr><td>${esc(x.nome)}</td><td class="num">${x.estoque}</td><td class="num">${Fmt.brl(x.custoMedio)}</td><td class="num">${x.qtdVend}</td><td class="num">${Fmt.brl(x.faturamento)}</td><td class="num">${Fmt.brl(x.lucroLiq)}</td></tr>`).join('');
     Exporter.pdf('Segmento: ' + label + ' · ' + ctx.label, kpis + `<table><thead><tr><th>Produto</th><th class="num">Estoque</th><th class="num">Custo méd</th><th class="num">Vend.</th><th class="num">Faturado</th><th class="num">Lucro líq</th></tr></thead><tbody>${rows}</tbody></table>`);
+  }
+};
+
+</script>
+  <script>
+/* ============ RICO GAMES ERP — Simulador Comercial ============
+   Simula preços, descontos, combos, taxas e quantidades usando os dados REAIS do ERP.
+   NÃO altera nenhum preço/produto no sistema — é só para análise e decisão. */
+
+Modules.simState = { itens: [], forma: '', qtd: 1, comboPreco: null, nome: '' };
+
+/* Cálculo de um cenário de venda */
+Modules.simCalc = function (preco, custo, qtd, forma) {
+  preco = +preco || 0; custo = +custo || 0; qtd = +qtd || 1;
+  const fat = preco * qtd, custoTot = custo * qtd, bruto = fat - custoTot;
+  const taxa = (typeof Taxas !== 'undefined' && Taxas.feeByKey) ? Taxas.feeByKey(forma, fat) : 0;
+  const liq = bruto - taxa;
+  return { preco, fat, custoTot, bruto, taxa, liq, margemV: fat ? liq / fat * 100 : 0, margemC: custoTot ? liq / custoTot * 100 : 0, capital: custoTot };
+};
+
+Modules.simFormas = function () { return (typeof Taxas !== 'undefined') ? Taxas.ativas().map(t => t.key) : ['PIX', 'Dinheiro', 'Débito', 'Crédito à vista']; };
+
+Modules.biSimulador = function () {
+  if (!this.segState) { /* noop */ }
+  const forms = this.simFormas();
+  if (!this.simState.forma) this.simState.forma = forms[0] || 'PIX';
+  const prods = BI.prods().slice().sort((a, b) => a.nome.localeCompare(b.nome));
+  const cenarios = DB.all('cenarios');
+  const selHtml = this.simState.itens.map(it => {
+    const p = BI.prodInfo(it.sku) || (DB.all('produtos').find(x => x.sku === it.sku)) || {};
+    return `<div class="sim-item" data-sku="${esc(it.sku)}">
+      <div class="sim-item-h"><b>${esc(p.nome || it.sku)}</b> ${condBadge ? condBadge(p.condicao || 'novo') : ''} <span class="sim-rm" onclick="Modules.simRemove('${esc(it.sku)}')">✕</span></div>
+      <div class="muted" style="font-size:11.5px">${esc(p.categoria || '')} · estoque ${(p.qtd || 0)} · custo méd ${Fmt.brl(p.custoMedio || p.custo || 0)} · preço atual ${Fmt.brl(p.preco || 0)}</div>
+      <div class="sim-item-cfg">
+        <label>Novo preço (R$)<input type="text" inputmode="decimal" id="sim-preco-${esc(it.sku)}" value="${it.novoPreco != null ? String(it.novoPreco).replace('.', ',') : ''}" placeholder="${String(p.preco || 0).replace('.', ',')}" oninput="Modules.simRecalc()"></label>
+        <label>Desconto<input type="number" step="0.01" id="sim-desc-${esc(it.sku)}" value="${it.descVal || ''}" placeholder="0" oninput="Modules.simRecalc()" style="width:70px"></label>
+        <select id="sim-desctipo-${esc(it.sku)}" onchange="Modules.simRecalc()"><option value="pct" ${it.descTipo !== 'rs' ? 'selected' : ''}>%</option><option value="rs" ${it.descTipo === 'rs' ? 'selected' : ''}>R$</option></select>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `
+  <div class="sim-grid">
+    <!-- 1. Seleção -->
+    <div class="card"><div class="section-title">1️⃣ Produtos</div>
+      <input id="sim-busca" placeholder="Buscar produto para simular..." oninput="Modules.simBusca()" autocomplete="off">
+      <div id="sim-drop" class="sim-drop"></div>
+      <div id="sim-sel" style="margin-top:10px">${selHtml || '<p class="muted">Selecione um ou mais produtos para simular.</p>'}</div>
+    </div>
+    <!-- 2. Configuração -->
+    <div class="card"><div class="section-title">2️⃣ Cenário</div>
+      <div class="form-grid">
+        <div class="field"><label>Forma de pagamento</label><select id="sim-forma" onchange="Modules.simRecalc()">${forms.map(f => `<option ${this.simState.forma === f ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select></div>
+        <div class="field"><label>Quantidade (por produto)</label><input id="sim-qtd" type="number" min="1" value="${this.simState.qtd || 1}" oninput="Modules.simRecalc()"></div>
+        <div class="field full"><label>Preço promocional do COMBO (R$) <span class="muted" style="font-weight:400">— soma dos produtos como pacote</span></label><input id="sim-combopreco" type="text" inputmode="decimal" value="${this.simState.comboPreco != null ? String(this.simState.comboPreco).replace('.', ',') : ''}" placeholder="deixe vazio para não simular combo" oninput="Modules.simRecalc()"></div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input id="sim-nome" placeholder="Nome do cenário (ex: Black Friday)" value="${esc(this.simState.nome || '')}" style="flex:1;min-width:140px">
+        <button class="btn-primary btn-sm" onclick="Modules.simSalvar()">💾 Salvar cenário</button>
+      </div>
+      ${cenarios.length ? `<div style="margin-top:10px"><div class="muted" style="font-size:11.5px;margin-bottom:4px">Cenários salvos:</div><div style="display:flex;gap:6px;flex-wrap:wrap">${cenarios.slice().sort((a, b) => new Date(b.data) - new Date(a.data)).map(c => `<span class="seg-chip" onclick="Modules.simCarregar('${c.id}')">${esc(c.nome)} <span onclick="event.stopPropagation();Modules.simDelCenario('${c.id}')" style="color:var(--red)">✕</span></span>`).join('')}</div></div>` : ''}
+    </div>
+  </div>
+  <div id="sim-result" style="margin-top:16px"></div>`;
+};
+
+Modules.simBusca = function () {
+  const q = (fval('sim-busca') || '').toLowerCase(); const drop = document.getElementById('sim-drop'); if (!drop) return;
+  if (!q) { drop.classList.remove('show'); drop.innerHTML = ''; return; }
+  const list = DB.all('produtos').filter(p => !this.simState.itens.some(i => i.sku === p.sku) && (p.nome.toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q))).slice(0, 10);
+  drop.innerHTML = list.length ? list.map(p => `<div class="ms-opt" onmousedown="event.preventDefault();Modules.simAdd('${esc(p.sku)}')"><span>${esc(p.nome)}</span><span class="o-sku">${p.sku} · ${Fmt.brl(p.preco)}</span></div>`).join('') : '<div class="ms-empty">Nenhum produto.</div>';
+  drop.classList.add('show');
+};
+Modules.simAdd = function (sku) {
+  if (this.simState.itens.some(i => i.sku === sku)) return;
+  this.simState.itens.push({ sku, novoPreco: null, descTipo: 'pct', descVal: 0 });
+  const b = document.getElementById('sim-busca'); if (b) b.value = '';
+  const d = document.getElementById('sim-drop'); if (d) { d.classList.remove('show'); d.innerHTML = ''; }
+  this.biRender();
+};
+Modules.simRemove = function (sku) { this.simState.itens = this.simState.itens.filter(i => i.sku !== sku); this.biRender(); };
+
+/* Lê os inputs, recalcula tudo e preenche a área de resultado (não re-renderiza os inputs) */
+Modules.simRecalc = function () {
+  const host = document.getElementById('sim-result'); if (!host) return;
+  const S = this.simState;
+  S.forma = fval('sim-forma') || S.forma; S.qtd = parseInt(fval('sim-qtd')) || 1;
+  const cp = moneyBR(fval('sim-combopreco')); S.comboPreco = isNaN(cp) ? null : cp; S.nome = fval('sim-nome') || S.nome;
+  // resolve o novo preço de cada item (preço digitado OU desconto)
+  const rows = S.itens.map(it => {
+    const p = BI.prodInfo(it.sku) || DB.all('produtos').find(x => x.sku === it.sku) || {};
+    const custo = p.custoMedio || p.custo || 0, precoAtual = p.preco || 0;
+    let novoPreco = moneyBR(fval('sim-preco-' + it.sku));
+    const descVal = parseFloat(String(fval('sim-desc-' + it.sku)).replace(',', '.')) || 0;
+    const descTipo = fval('sim-desctipo-' + it.sku) || 'pct';
+    it.descVal = descVal; it.descTipo = descTipo;
+    if (isNaN(novoPreco)) { novoPreco = descVal > 0 ? Math.max(0, precoAtual - (descTipo === 'rs' ? descVal : precoAtual * descVal / 100)) : precoAtual; }
+    it.novoPreco = novoPreco;
+    const atual = this.simCalc(precoAtual, custo, S.qtd, S.forma);
+    const promo = this.simCalc(novoPreco, custo, S.qtd, S.forma);
+    return { p, custo, precoAtual, novoPreco, atual, promo };
+  });
+  host.innerHTML = this.simResultHtml(rows);
+};
+
+Modules.simResultHtml = function (rows) {
+  if (!rows.length) return '<div class="card"><p class="muted">Selecione produtos acima para ver o resultado.</p></div>';
+  const S = this.simState;
+  const cmpBox = (r) => {
+    const dPreco = r.novoPreco - r.precoAtual, dLiq = r.promo.liq - r.atual.liq, dMarg = r.promo.margemV - r.atual.margemV;
+    return `<div class="sim-cmp">
+      <div class="sim-cmp-h">${esc(r.p.nome)} <span class="muted" style="font-weight:500">· ${S.qtd} un · ${esc(S.forma)}</span></div>
+      <div class="sim-cmp-cols">
+        <div class="sim-col"><div class="sim-col-t">Preço atual</div>
+          <div class="sim-line"><span>Venda</span><b>${Fmt.brl(r.atual.fat)}</b></div>
+          <div class="sim-line"><span>Taxa</span><b style="color:var(--red)">− ${Fmt.brl(r.atual.taxa)}</b></div>
+          <div class="sim-line"><span>Lucro líquido</span><b style="color:var(--green)">${Fmt.brl(r.atual.liq)}</b></div>
+          <div class="sim-line"><span>Margem</span><b>${Fmt.pct(r.atual.margemV)}</b></div></div>
+        <div class="sim-col promo"><div class="sim-col-t">Promoção</div>
+          <div class="sim-line"><span>Venda</span><b>${Fmt.brl(r.promo.fat)}</b></div>
+          <div class="sim-line"><span>Taxa</span><b style="color:var(--red)">− ${Fmt.brl(r.promo.taxa)}</b></div>
+          <div class="sim-line"><span>Lucro líquido</span><b style="color:${r.promo.liq >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(r.promo.liq)}</b></div>
+          <div class="sim-line"><span>Margem</span><b>${Fmt.pct(r.promo.margemV)}</b></div></div>
+      </div>
+      <div class="sim-diff ${dLiq >= 0 ? 'pos' : 'neg'}">Diferença: <b>${dPreco >= 0 ? '+' : ''}${Fmt.brl(dPreco)}</b> no preço · <b>${dLiq >= 0 ? '+' : ''}${Fmt.brl(dLiq)}</b> no lucro · <b>${dMarg >= 0 ? '+' : ''}${dMarg.toFixed(2)}</b> pontos de margem
+        ${r.promo.margemV < 8 ? ' · <span style="color:var(--red)">⚠️ margem baixa</span>' : (r.promo.liq < 0 ? ' · <span style="color:var(--red)">⚠️ prejuízo</span>' : '')}</div>
+      <div class="muted" style="font-size:11.5px;margin-top:6px">Se vender todo o estoque (${r.p.qtd || 0} un) por ${Fmt.brl(r.novoPreco)}: faturamento ${Fmt.brl(r.novoPreco * (r.p.qtd || 0))} · lucro líquido ${Fmt.brl((r.novoPreco - r.custo) * (r.p.qtd || 0) - (typeof Taxas !== 'undefined' ? Taxas.feeByKey(S.forma, r.novoPreco * (r.p.qtd || 0)) : 0))} · capital em estoque ${Fmt.brl(r.custo * (r.p.qtd || 0))}</div>
+    </div>`;
+  };
+
+  // combo
+  let comboHtml = '';
+  if (rows.length >= 2) {
+    const custoCombo = rows.reduce((s, r) => s + r.custo, 0);
+    const precoIndAtual = rows.reduce((s, r) => s + r.precoAtual, 0);
+    const precoIndPromo = rows.reduce((s, r) => s + r.novoPreco, 0);
+    const comboPreco = (S.comboPreco != null && S.comboPreco > 0) ? S.comboPreco : precoIndPromo;
+    const indiv = this.simCalc(precoIndPromo, custoCombo, 1, S.forma);   // vender separado (com promo de cada)
+    const combo = this.simCalc(comboPreco, custoCombo, 1, S.forma);      // vender como combo
+    const melhor = combo.liq >= indiv.liq ? 'combo' : 'individual';
+    comboHtml = `<div class="card" style="margin-bottom:16px"><div class="section-title">🎁 Combo — venda individual × combo</div>
+      <div class="muted" style="font-size:12px;margin-bottom:10px">Produtos: ${rows.map(r => esc(r.p.nome)).join(' + ')} · custo total ${Fmt.brl(custoCombo)} · soma dos preços atuais ${Fmt.brl(precoIndAtual)}</div>
+      <div class="sim-cmp-cols">
+        <div class="sim-col ${melhor === 'individual' ? 'win' : ''}"><div class="sim-col-t">Vender separado (com promo de cada)</div>
+          <div class="sim-line"><span>Venda</span><b>${Fmt.brl(indiv.fat)}</b></div>
+          <div class="sim-line"><span>Lucro líquido</span><b style="color:var(--green)">${Fmt.brl(indiv.liq)}</b></div>
+          <div class="sim-line"><span>Margem</span><b>${Fmt.pct(indiv.margemV)}</b></div></div>
+        <div class="sim-col promo ${melhor === 'combo' ? 'win' : ''}"><div class="sim-col-t">Combo (${Fmt.brl(comboPreco)})</div>
+          <div class="sim-line"><span>Venda</span><b>${Fmt.brl(combo.fat)}</b></div>
+          <div class="sim-line"><span>Lucro líquido</span><b style="color:${combo.liq >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(combo.liq)}</b></div>
+          <div class="sim-line"><span>Margem</span><b>${Fmt.pct(combo.margemV)}</b></div></div>
+      </div>
+      <div class="sim-verdict">${melhor === 'combo' ? '✅ O <b>combo</b> é mais vantajoso' : '✅ Vender <b>separado</b> é mais vantajoso'} (diferença de ${Fmt.brl(Math.abs(combo.liq - indiv.liq))} no lucro líquido).</div>
+    </div>`;
+  }
+
+  // sugestões (cross-sell real)
+  let sug = '';
+  const skus = rows.map(r => r.p.sku);
+  if (skus.length && typeof BI.crossSell === 'function') {
+    const cross = BI.crossSell(BI.vendas());
+    const dicas = [];
+    skus.forEach(sku => {
+      const c = cross.find(x => x.sku === sku);
+      if (c && c.comps.length) { const top = c.comps[0]; const pct = c.orders ? Math.round(top.count / c.orders * 100) : 0;
+        if (pct >= 30 && !skus.includes(top.sku)) dicas.push(`"${top.nome}" costuma ser vendido junto com ${(BI.prodInfo(sku) || {}).nome} em ${pct}% das vendas — vale incluir no combo.`);
+      }
+    });
+    // produto de incentivo: baixa saída + margem alta
+    const a = BI.agg(BI.vendas());
+    const incent = BI.prods().filter(p => p.qtd > 0).map(p => { const ag = a.find(x => x.sku === p.sku) || { qtd: 0 }; const margem = p.preco ? (p.preco - (p.custoMedio || p.custo)) / p.preco * 100 : 0; return { p, vend: ag.qtd, margem }; }).filter(x => x.vend <= 1 && x.margem >= 25).sort((u, v) => v.margem - u.margem)[0];
+    if (incent) dicas.push(`"${incent.p.nome}" tem baixa saída e margem alta (${Fmt.pct(incent.margem)}) — bom produto de incentivo na promoção.`);
+    if (dicas.length) sug = `<div class="card" style="margin-bottom:16px"><div class="section-title">💡 Sugestões (baseadas no seu histórico)</div>${dicas.map(d => `<div class="pag-insight">💬 ${esc(d)}</div>`).join('')}</div>`;
+  }
+
+  return `
+  <div class="section-title" style="margin:0 0 10px">3️⃣ Resultado por produto</div>
+  ${rows.map(cmpBox).join('')}
+  <div class="section-title" style="margin:16px 0 10px">4️⃣ Comparações e decisão</div>
+  ${comboHtml}${sug}
+  ${App.canFinance() ? `<div style="margin-bottom:8px"><button class="btn-ghost btn-sm" onclick="Modules.simExport('xlsx')">⬇️ Excel</button> <button class="btn-ghost btn-sm" onclick="Modules.simExport('pdf')">🖨️ PDF</button></div>` : ''}
+  <p class="muted" style="font-size:11.5px">O simulador usa custo médio, taxas e histórico reais e <b>não altera</b> nenhum preço no sistema.</p>`;
+};
+
+/* Cenários salvos */
+Modules.simSalvar = function () {
+  this.simRecalc();
+  const nome = fval('sim-nome') || 'Cenário ' + new Date().toLocaleDateString('pt-BR');
+  if (!this.simState.itens.length) return Toast.err('Selecione produtos antes de salvar o cenário.');
+  DB.insert('cenarios', { nome, itens: this.simState.itens.map(i => ({ sku: i.sku, novoPreco: i.novoPreco, descTipo: i.descTipo, descVal: i.descVal })), forma: this.simState.forma, qtd: this.simState.qtd, comboPreco: this.simState.comboPreco, data: new Date().toISOString() });
+  Toast.ok('Cenário "' + nome + '" salvo.'); this.biRender();
+};
+Modules.simCarregar = function (id) {
+  const c = DB.get('cenarios', id); if (!c) return;
+  this.simState = { itens: (c.itens || []).map(i => Object.assign({}, i)), forma: c.forma || this.simFormas()[0], qtd: c.qtd || 1, comboPreco: c.comboPreco != null ? c.comboPreco : null, nome: c.nome || '' };
+  Toast.ok('Cenário "' + c.nome + '" carregado.'); this.biRender();
+};
+Modules.simDelCenario = function (id) { DB.remove('cenarios', id); Toast.ok('Cenário removido.'); this.biRender(); };
+
+Modules.simExport = function (fmt) {
+  const S = this.simState, r2 = x => Math.round(x * 100) / 100;
+  const rows = S.itens.map(it => {
+    const p = BI.prodInfo(it.sku) || DB.all('produtos').find(x => x.sku === it.sku) || {};
+    const custo = p.custoMedio || p.custo || 0, precoAtual = p.preco || 0, novo = it.novoPreco != null ? it.novoPreco : precoAtual;
+    const atual = this.simCalc(precoAtual, custo, S.qtd, S.forma), promo = this.simCalc(novo, custo, S.qtd, S.forma);
+    return { nome: p.nome, precoAtual, novo, atual, promo };
+  });
+  if (fmt === 'xlsx') {
+    const aoa = [['Rico Games — Simulador Comercial'], ['Cenário', S.nome || '—'], ['Forma', S.forma], ['Qtd', S.qtd], [],
+      ['Produto', 'Preço atual', 'Novo preço', 'Lucro líq atual', 'Lucro líq promo', 'Margem atual %', 'Margem promo %']];
+    rows.forEach(x => aoa.push([x.nome, r2(x.precoAtual), r2(x.novo), r2(x.atual.liq), r2(x.promo.liq), r2(x.atual.margemV), r2(x.promo.margemV)]));
+    Exporter.xlsx('simulacao-' + (S.nome || 'cenario').replace(/[^\w]+/g, '-').slice(0, 24) + '.xlsx', 'Simulação', aoa);
+  } else {
+    const kp = (l, v) => `<div class="k"><div class="l">${l}</div><div class="v">${v}</div></div>`;
+    const tot = rows.reduce((s, x) => s + x.promo.liq, 0);
+    const kpis = `<div class="kpis">${kp('Cenário', esc(S.nome || '—'))}${kp('Forma', esc(S.forma))}${kp('Qtd/produto', S.qtd)}${kp('Lucro líq. total (promo)', Fmt.brl(tot))}</div>`;
+    const tr = rows.map(x => `<tr><td>${esc(x.nome)}</td><td class="num">${Fmt.brl(x.precoAtual)}</td><td class="num">${Fmt.brl(x.novo)}</td><td class="num">${Fmt.brl(x.atual.liq)}</td><td class="num">${Fmt.brl(x.promo.liq)}</td><td class="num">${Fmt.pct(x.promo.margemV)}</td></tr>`).join('');
+    Exporter.pdf('Simulador Comercial — ' + (S.nome || 'Cenário'), kpis + `<table><thead><tr><th>Produto</th><th class="num">Preço atual</th><th class="num">Novo preço</th><th class="num">Lucro atual</th><th class="num">Lucro promo</th><th class="num">Margem promo</th></tr></thead><tbody>${tr}</tbody></table>`);
   }
 };
 
