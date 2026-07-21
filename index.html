@@ -615,7 +615,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.8 · simulador redesenhado</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.9 · verificação geral</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -6628,6 +6628,17 @@ const App = {
   current: 'dashboard',
 
   init() {
+    // Mostra na tela qualquer erro silencioso de um handler (ex: um botão que "não faz nada"),
+    // em vez de falhar em silêncio — ajuda a diagnosticar rapidamente.
+    if (!window.__rgErrHook) {
+      window.__rgErrHook = true;
+      window.addEventListener('error', function (e) {
+        try { if (typeof Toast !== 'undefined' && e && e.message) Toast.err('Erro: ' + e.message); } catch (_) {}
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        try { const r = e && e.reason; const msg = (r && r.message) || r; if (typeof Toast !== 'undefined' && msg) Toast.err('Erro: ' + msg); } catch (_) {}
+      });
+    }
     DB.load();
     Theme.init();
     this.renderAuth();
