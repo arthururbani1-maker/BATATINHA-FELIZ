@@ -615,7 +615,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 4.9 · verificação geral</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 5.0 · armazenamento resiliente</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -671,20 +671,48 @@ const DB = (function () {
 
   function normalize() { COLLECTIONS.forEach(c => { if (!Array.isArray(state[c])) state[c] = []; }); }
   function load() {
+    // Recupera espaço da 2ª cópia de backup (modelo antigo de 2 slots) — agora usamos 1 só.
+    try { localStorage.removeItem('rg_backup2'); localStorage.removeItem('rg_backup2_at'); } catch (_) {}
     try { state = JSON.parse(localStorage.getItem(KEY)); } catch (e) { state = null; }
     if (!state || !state.produtos) { state = seed(); save(); }
     normalize(); bumpVerFromState();
     return state;
   }
-  function persist() { localStorage.setItem(KEY, JSON.stringify(state)); } // pode lançar se armazenamento cheio/bloqueado → propaga p/ quem chamou
+  function isQuota(e) { return !!e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014 || /quota|exceed/i.test(e.message || '')); }
+  function trySet() { try { localStorage.setItem(KEY, JSON.stringify(state)); return true; } catch (e) { return false; } }
+  // Grava o estado. Se o armazenamento do navegador encher (QuotaExceededError), libera espaço em etapas
+  // e tenta de novo — SEM nunca descartar vendas, produtos ou financeiro. Só apara o log de movimentações
+  // (auditoria) como último recurso. Assim uma venda nunca deixa de ser salva por falta de espaço.
+  function persist() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); return; }
+    catch (e) { if (!isQuota(e)) throw e; }
+    // 1) descarta a 2ª cópia de backup (a mais antiga)
+    try { localStorage.removeItem('rg_backup2'); localStorage.removeItem('rg_backup2_at'); } catch (_) {}
+    if (trySet()) return;
+    // 2) descarta a 1ª cópia de backup (a nuvem continua sendo o backup principal)
+    try { localStorage.removeItem('rg_backup'); localStorage.removeItem('rg_backup_at'); } catch (_) {}
+    if (trySet()) return;
+    // 3) apara o log de MOVIMENTAÇÕES mantendo as mais recentes (não afeta vendas/produtos/financeiro)
+    if (Array.isArray(state.movimentacoes) && state.movimentacoes.length > 500) {
+      state.movimentacoes = state.movimentacoes.slice(0, 500);
+      if (trySet()) return;
+    }
+    if (Array.isArray(state.movimentacoes) && state.movimentacoes.length > 150) {
+      state.movimentacoes = state.movimentacoes.slice(0, 150);
+      if (trySet()) return;
+    }
+    // 4) se ainda não couber, propaga o erro (o aviso na tela aparece) — nada foi perdido
+    localStorage.setItem(KEY, JSON.stringify(state));
+  }
   function save() { persist(); if (typeof Cloud !== 'undefined' && Cloud.afterLocalSave) Cloud.afterLocalSave(); }
   // Guarda até 2 pontos de backup (rotativos) do estado ANTES de qualquer sobrescrita
   function snapshotBackup() {
     try {
       const cur = localStorage.getItem(KEY); if (!cur) return;
       if (cur === localStorage.getItem('rg_backup')) return; // não duplica backup idêntico
-      const prev = localStorage.getItem('rg_backup'), prevAt = localStorage.getItem('rg_backup_at');
-      if (prev) { localStorage.setItem('rg_backup2', prev); localStorage.setItem('rg_backup2_at', prevAt || ''); }
+      // Mantém apenas UMA cópia local (a nuvem é o backup principal). Guardar 2 cópias completas
+      // triplicava o uso do armazenamento e estourava a cota do navegador.
+      try { localStorage.removeItem('rg_backup2'); localStorage.removeItem('rg_backup2_at'); } catch (_) {}
       localStorage.setItem('rg_backup', cur); localStorage.setItem('rg_backup_at', new Date().toISOString());
     } catch (e) { }
   }
