@@ -615,7 +615,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 5.0 · armazenamento resiliente</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 5.4 · detalhe de troca na venda</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -3777,7 +3777,7 @@ Modules.vdDetail = function (id) {
       ${fin ? `<td class="num" style="color:${i.lucroLiq >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${Fmt.brl(i.lucroLiq)}</td>` : ''}
       ${adm && !v.cancelada ? `<td class="num">${itAcao(i, idx)}</td>` : ''}</tr>`;
   }).join('');
-  const produtos = `<div class="section-title" style="margin:0 0 8px">2. Produtos vendidos${fin && c.itens.length > 1 ? ' <span class="muted" style="font-weight:500">· taxa rateada proporcional ao valor de cada produto</span>' : ''}</div>
+  const produtos = `<div class="section-title" style="margin:0 0 8px">2. Produtos vendidos <span class="muted" style="font-weight:500">· saíram do estoque</span>${fin && c.itens.length > 1 ? ' <span class="muted" style="font-weight:500">· taxa rateada proporcional ao valor de cada produto</span>' : ''}</div>
     <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Entrega</th><th class="num">Valor</th>${fin ? '<th class="num">Custo</th><th class="num">Lucro bruto</th><th class="num">Taxa prop.</th><th class="num">Lucro líq.</th>' : ''}${adm && !v.cancelada ? '<th></th>' : ''}</tr></thead><tbody>${itensHtml}</tbody></table></div>
     ${temPre ? `<div class="muted" style="font-size:12px;margin-top:6px">⏳ Itens em pré-venda são entregues depois pela aba <b>Pré-venda / Reservas</b> — mesma venda, sem duplicar.</div>` : ''}`;
 
@@ -3790,10 +3790,24 @@ Modules.vdDetail = function (id) {
     const finNota = p.financeira ? `<div class="muted" style="font-size:11px">🏦 a receber em ${p.prazoDias || 0} dia(s)${fin ? ' · líquido ' + Fmt.brl(p.valor - taxa) : ''}</div>` : '';
     return `<tr><td><b>${esc(nome)}</b>${finNota}</td><td class="num">${Fmt.brl(p.valor)}</td>${fin ? `<td class="num">${Fmt.pct(pct)}</td><td class="num" style="color:var(--red)">${taxa > 0 ? '− ' + Fmt.brl(taxa) : 'R$ 0,00'}</td>` : ''}</tr>`;
   }).join('');
+  const colTaxaVazia = fin ? '<td class="num">—</td><td class="num">R$ 0,00</td>' : '';
+  const usadosPagRows = (v.usados || []).map(u => `<tr><td><b>🔄 Produto usado recebido</b><div class="muted" style="font-size:11.5px">${u.produtoId ? `<a style="color:var(--accent);cursor:pointer" onclick="Modules.vdVerUsado('${esc(u.produtoId)}')">${esc(u.nome)}</a>` : esc(u.nome)}${u.categoria ? ' · ' + esc(u.categoria) : ''} — entrou no estoque</div></td><td class="num">${Fmt.brl(u.valor)}</td>${colTaxaVazia}</tr>`).join('');
+  const totalPago = pags.reduce((s, p) => s + (p.valor || 0), 0) + (v.usados || []).reduce((s, u) => s + (u.valor || 0), 0);
   const formas = `<div class="section-title" style="margin:0 0 8px">3. Formas de pagamento${fin ? ' e taxas aplicadas' : ''}</div>
-    <div class="table-wrap"><table><thead><tr><th>Forma</th><th class="num">Valor</th>${fin ? '<th class="num">Taxa %</th><th class="num">Taxa descontada</th>' : ''}</tr></thead><tbody>${pagRows}</tbody>
-    ${fin ? `<tfoot><tr style="font-weight:700;border-top:2px solid var(--line)"><td>Total de taxas</td><td></td><td></td><td class="num" style="color:var(--red)">− ${Fmt.brl(taxaTot)}</td></tr></tfoot>` : ''}</table></div>
-    ${(v.usados && v.usados.length) ? `<div class="muted" style="font-size:12px;margin-top:6px">🔄 ${v.usados.length} usado(s) recebido(s) como pagamento (não-financeiro): − ${Fmt.brl(v.usadoValor || 0)}</div>` : ''}`;
+    <div class="table-wrap"><table><thead><tr><th>Forma</th><th class="num">Valor</th>${fin ? '<th class="num">Taxa %</th><th class="num">Taxa descontada</th>' : ''}</tr></thead><tbody>${pagRows}${usadosPagRows}</tbody>
+    <tfoot><tr style="font-weight:700;border-top:2px solid var(--line)"><td>Total da venda</td><td class="num">${Fmt.brl(totalPago)}</td>${fin ? `<td class="num">Taxas</td><td class="num" style="color:var(--red)">− ${Fmt.brl(taxaTot)}</td>` : ''}</tr></tfoot></table></div>
+    ${(v.usados && v.usados.length) ? `<div class="muted" style="font-size:12px;margin-top:6px">🔄 O valor do usado é <b>parte do pagamento</b> (não gera taxa nem entra no caixa). Total da venda = pagamentos + usados, sem duplicar valores.</div>` : ''}`;
+
+  /* ---------- Bloco 4: Produtos recebidos na troca (entraram no estoque) ---------- */
+  const recebidos = (v.usados && v.usados.length) ? `<div class="section-title" style="margin:0 0 8px">4. Produtos recebidos na troca <span class="muted" style="font-weight:500">· entraram no estoque</span></div>
+    <div class="table-wrap"><table><thead><tr><th>Produto recebido</th><th>Categoria</th><th class="num">Valor atribuído</th><th>Entrada</th><th>Venda</th></tr></thead>
+    <tbody>${v.usados.map(u => `<tr>
+      <td class="strong">${u.produtoId ? `<a style="color:var(--accent);cursor:pointer" onclick="Modules.vdVerUsado('${esc(u.produtoId)}')">${esc(u.nome)} 🔎</a>` : esc(u.nome)}${u.serie ? `<div class="muted" style="font-size:11px">S/N ${esc(u.serie)}</div>` : ''}${u.estado ? `<div class="muted" style="font-size:11px">estado: ${esc(u.estado)}</div>` : ''}</td>
+      <td>${esc(u.categoria || '—')}</td>
+      <td class="num strong">${Fmt.brl(u.valor)}</td>
+      <td>${Fmt.date(v.data)}</td>
+      <td>#${num}</td></tr>`).join('')}</tbody></table></div>
+    <div class="muted" style="font-size:12px;margin-top:6px">Esses produtos <b>entraram</b> no estoque como parte do pagamento desta venda. Clique no nome para ver o histórico e a origem do item.</div>` : '';
 
   /* ---------- Bloco 5: Cálculo do lucro líquido (admin) ---------- */
   const calculo = fin ? `<div class="section-title" style="margin:0 0 8px">5. Como o lucro líquido foi calculado</div>
@@ -3815,17 +3829,24 @@ Modules.vdDetail = function (id) {
         <div class="mini-stat"><span>Número da venda</span><b>#${num}</b></div>
         ${v.cliente ? `<div class="mini-stat"><span>Cliente</span><b>${esc(v.cliente)}${v.telefone ? ' · ' + esc(v.telefone) : ''}</b></div>` : ''}
         <div class="mini-stat"><span>Data e horário</span><b>${Fmt.datetime(v.data)}</b></div>
-        <div class="mini-stat"><span>Pagamento</span><b>${pags.map(p => p.tipo + (p.parcelas > 1 ? ' ' + p.parcelas + 'x' : '')).join(', ')}</b></div>
+        <div class="mini-stat"><span>Pagamento</span><b>${pags.map(p => p.tipo + (p.parcelas > 1 ? ' ' + p.parcelas + 'x' : '')).join(', ')}${(v.usados && v.usados.length) ? ' + usado recebido (' + v.usados.map(u => esc(u.nome)).join(', ') + ')' : ''}</b></div>
       </div>
       ${resumo}
       <div style="margin-top:16px">${produtos}</div>
       <div style="margin-top:16px">${formas}</div>
+      ${recebidos ? `<div style="margin-top:16px">${recebidos}</div>` : ''}
       ${calculo ? `<div style="margin-top:16px">${calculo}</div>` : ''}
       ${resultado ? `<div style="margin-top:16px">${resultado}</div>` : ''}`,
     foot: v.cancelada
       ? `<span class="badge b-red" style="margin-right:auto">Venda cancelada em ${Fmt.date(v.canceladaEm || v.data)}</span>${typeof Print !== 'undefined' ? `<button class="btn-ghost" onclick="Print.print(DB.get('vendas','${id}'))">🖨️ Reimprimir</button>` : ''}<button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
       : `${App.can('podeCancelar') ? `<button class="btn-danger" style="margin-right:auto" onclick="Modules.vdCancel('${id}')">✕ Cancelar venda</button>` : ''}${App.isAdmin() ? `<button class="btn-ghost" onclick="Modules.vdGarantia('${id}')">🛡️ Garantia</button>` : ''}${typeof Print !== 'undefined' ? `<button class="btn-ghost" onclick="Print.print(DB.get('vendas','${id}'))">🖨️ Reimprimir cupom</button>` : ''}<button class="btn-ghost" onclick="Modal.close()">Fechar</button>`
   });
+};
+
+Modules.vdVerUsado = function (produtoId) {
+  const p = produtoId ? DB.get('produtos', produtoId) : null;
+  if (p && typeof ProdHist !== 'undefined') { Modal.close(); ProdHist.open(produtoId); }
+  else Toast.warn('Esse produto usado não está mais no catálogo do estoque.');
 };
 
 Modules.vdGarantia = function (id) {
