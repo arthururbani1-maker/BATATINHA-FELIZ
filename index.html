@@ -579,6 +579,15 @@ td .muted,.muted{color:var(--txt-3)}
 .ap-ins.risco{background:color-mix(in srgb,var(--red) 9%,transparent);border-left-color:var(--red)}
 .ap-ins.analise{background:color-mix(in srgb,var(--amber) 9%,transparent);border-left-color:var(--amber)}
 
+/* ===== Entrada — pagamento ===== */
+.ent-pagline{border:1px solid var(--border);border-radius:11px;padding:10px 12px;margin-bottom:8px;background:var(--bg-2)}
+.ent-pagrow{display:flex;gap:8px;align-items:center}
+.ent-pagrow select{flex:1;min-width:0}
+.ent-pagextra{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+.ent-pagextra label{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--txt-3)}
+.ent-pagextra input{padding:6px 8px;font-size:13px}
+.ent-pagcalc{font-size:12px;color:var(--txt-2);align-self:center}
+
 </style>
   <script>
     /* Aplica o tema o quanto antes para evitar "flash" ao carregar */
@@ -649,7 +658,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 5.6 · qtd no usado recebido</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 5.7 · pagamento na entrada</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -1830,9 +1839,51 @@ const Modules = {
 
   /* ===================== ENTRADA DE ESTOQUE ===================== */
   entradaLines: [],
+  entPagLines: [{ forma: 'Dinheiro', valor: 0 }],
+  entFormas() {
+    const base = ['Dinheiro', 'PIX', 'Débito', 'Crédito à vista', 'Crédito parcelado', 'Transferência Bancária', 'Boleto', 'Consórcio', 'Outro'];
+    const extra = ((DB.all('config')[0] || {}).formasCompra) || [];
+    extra.forEach(f => { if (f && base.indexOf(f) < 0) base.push(f); });
+    return base;
+  },
+  entOrigens() { return ['Caixa da loja', 'Conta bancária', 'Cartão da empresa', 'Conta pessoal (adiantamento/sócio)', 'Outro']; },
+  entPendentes() { return ['Boleto', 'Crédito parcelado', 'Consórcio']; },
+  entTotal() { return this.entradaLines.reduce((s, l) => s + l.qtd * l.custo, 0); },
+  entPagAdd() { const soma = this.entPagLines.reduce((s, p) => s + (+p.valor || 0), 0); this.entPagLines.push({ forma: 'PIX', valor: Math.max(0, this.entTotal() - soma) }); this.entPagRender(); },
+  entPagDel(i) { this.entPagLines.splice(i, 1); if (!this.entPagLines.length) this.entPagLines.push({ forma: 'Dinheiro', valor: 0 }); this.entPagRender(); },
+  entPagSet(i, f, v) { const p = this.entPagLines[i]; if (!p) return; if (f === 'valor') p.valor = moneyBR(v) || 0; else if (f === 'parcelas' || f === 'taxa') p[f] = parseFloat(String(v).replace(',', '.')) || 0; else p[f] = v; this.entPagRender(); },
+  entPagFill() { const soma = this.entPagLines.reduce((s, p, ix) => ix === 0 ? s : s + (+p.valor || 0), 0); if (this.entPagLines[0]) this.entPagLines[0].valor = Math.max(0, this.entTotal() - soma); this.entPagRender(); },
+  entPagRender() {
+    const box = document.getElementById('ent-pags'); if (!box) return;
+    const formas = this.entFormas(), pend = this.entPendentes();
+    box.innerHTML = this.entPagLines.map((p, i) => {
+      const isParc = p.forma === 'Crédito parcelado', isBoleto = p.forma === 'Boleto' || pend.indexOf(p.forma) >= 0 && p.forma !== 'Crédito parcelado';
+      const parc = parseInt(p.parcelas) || 0, val = +p.valor || 0, vParc = parc > 0 ? val / parc : 0;
+      return `<div class="ent-pagline">
+        <div class="ent-pagrow">
+          <select onchange="Modules.entPagSet(${i},'forma',this.value)">${formas.map(f => `<option ${p.forma === f ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select>
+          <input type="text" inputmode="decimal" placeholder="0,00" value="${p.valor ? String(p.valor).replace('.', ',') : ''}" onchange="Modules.entPagSet(${i},'valor',this.value)" style="width:130px;text-align:right">
+          ${this.entPagLines.length > 1 ? `<span class="ci-rm" title="Remover" onclick="Modules.entPagDel(${i})">✕</span>` : '<span style="width:14px"></span>'}
+        </div>
+        ${isParc ? `<div class="ent-pagextra">
+          <label>Parcelas<input type="number" min="1" value="${p.parcelas || ''}" placeholder="ex: 3" onchange="Modules.entPagSet(${i},'parcelas',this.value)"></label>
+          <label>Taxa operadora (R$)<input type="number" step="0.01" value="${p.taxa || ''}" placeholder="0,00" onchange="Modules.entPagSet(${i},'taxa',this.value)"></label>
+          <label>1ª parcela<input type="date" value="${p.primeira || ''}" onchange="Modules.entPagSet(${i},'primeira',this.value)"></label>
+          <div class="ent-pagcalc">Valor de cada parcela: <b>${parc > 0 ? Fmt.brl(vParc) : '—'}</b>${p.taxa ? ' · total c/ taxa ' + Fmt.brl(val + (+p.taxa || 0)) : ''}</div>
+        </div>` : ''}
+        ${isBoleto ? `<div class="ent-pagextra"><label>Vencimento<input type="date" value="${p.venc || ''}" onchange="Modules.entPagSet(${i},'venc',this.value)"></label><div class="ent-pagcalc">Entra em <b>Contas a Pagar</b> até a liquidação.</div></div>` : ''}
+      </div>`;
+    }).join('');
+    const total = this.entTotal(), soma = this.entPagLines.reduce((s, p) => s + (+p.valor || 0), 0), falta = Math.round((total - soma) * 100) / 100;
+    const sum = document.getElementById('ent-pag-sum'); if (sum) sum.innerHTML = `<div class="card" style="background:var(--bg-2);margin-top:12px">
+      <div class="mini-stat"><span>Total da compra</span><b>${Fmt.brl(total)}</b> <a class="muted" style="font-size:11px;cursor:pointer;margin-left:8px" onclick="Modules.entPagFill()">preencher</a></div>
+      <div class="mini-stat"><span>Total informado</span><b>${Fmt.brl(soma)}</b></div>
+      <div class="mini-stat" style="font-size:15px"><span class="strong">${Math.abs(falta) < 0.01 ? '✅ Confere' : (falta > 0 ? 'Falta informar' : 'Excede o total')}</span><b style="color:${Math.abs(falta) < 0.01 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(Math.abs(falta))}</b></div></div>`;
+  },
   entrada() {
     this.entradaLines = [];
-    setTimeout(() => { const e = document.getElementById('ent-busca'); if (e) e.focus(); this.entRender(); }, 30);
+    this.entPagLines = [{ forma: 'Dinheiro', valor: 0 }];
+    setTimeout(() => { const e = document.getElementById('ent-busca'); if (e) e.focus(); this.entRender(); this.entPagRender(); }, 30);
     return `
     <div class="page-head"><div><h1>Entrada de Estoque</h1><p>Reabasteça produtos já cadastrados — sem cadastrar de novo</p></div>
       <div class="actions"><button class="btn-ghost" onclick="App.go('estoque')">📦 Ver estoque</button></div></div>
@@ -1846,18 +1897,21 @@ const Modules = {
       <p class="muted" style="margin-top:8px;font-size:12px">Comece a digitar e selecione o produto na lista. Não está cadastrado? <a style="color:var(--green);cursor:pointer" onclick="App.go('estoque');setTimeout(()=>Modules.produtoForm(),120)">Cadastrar novo produto</a>.</p>
     </div>
     <div class="card" style="margin-bottom:16px">
-      <div class="section-title">2. Dados da entrada</div>
-      <div class="form-grid">
-        <div class="field"><label>Data da entrada</label><input id="ent-data" type="date" value="${new Date().toISOString().slice(0, 10)}"></div>
-        <div class="field full"><label>Observação</label><input id="ent-obs" placeholder="Ex: nota fiscal, lote, etc."></div>
-      </div>
-      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:var(--txt-2)"><input type="checkbox" id="ent-fin" checked> Lançar saída no Financeiro (pago à vista)</label>
-      <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;color:var(--txt-2)"><input type="checkbox" id="ent-prazo"> 📅 A prazo — lançar em Contas a Pagar (com vencimento) <input type="date" id="ent-venc" style="margin-left:6px"></label>
-    </div>
-    <div class="card">
-      <div class="section-title">3. Produtos a dar entrada</div>
+      <div class="section-title">2. Dados da compra</div>
+      <div class="form-grid" style="margin-bottom:2px"><div class="field"><label>Data da compra</label><input id="ent-data" type="date" value="${new Date().toISOString().slice(0, 10)}"></div></div>
       <div id="ent-lines"></div>
       <div id="ent-resumo"></div>
+    </div>
+    <div class="card">
+      <div class="section-title">3. Pagamento</div>
+      <p class="muted" style="font-size:12px;margin:-4px 0 10px">Informe como esta compra foi paga. Você pode dividir em mais de uma forma — a soma precisa ser igual ao total.</p>
+      <div id="ent-pags"></div>
+      <button class="btn-ghost btn-sm" style="margin-top:8px" onclick="Modules.entPagAdd()">+ Adicionar forma de pagamento</button>
+      <div class="form-grid" style="margin-top:14px">
+        <div class="field"><label>Origem do pagamento</label><select id="ent-origem">${this.entOrigens().map(o => `<option>${esc(o)}</option>`).join('')}</select></div>
+        <div class="field full"><label>Observação</label><input id="ent-obs" placeholder="Ex: nota fiscal, lote, etc."></div>
+      </div>
+      <div id="ent-pag-sum"></div>
       <button class="btn-primary btn-block" style="margin-top:14px" onclick="Modules.entSalvar()">✅ Confirmar entrada no estoque</button>
     </div>`;
   },
@@ -1895,33 +1949,54 @@ const Modules = {
     const totQ = this.entradaLines.reduce((s, l) => s + l.qtd, 0), totV = this.entradaLines.reduce((s, l) => s + l.qtd * l.custo, 0);
     document.getElementById('ent-resumo').innerHTML = `<div class="card" style="background:var(--bg-2);margin-top:14px">
       <div class="mini-stat"><span>Total de itens</span><b>${totQ} un</b></div>
-      <div class="mini-stat" style="font-size:16px"><span class="strong">Custo total da entrada</span><b style="color:var(--green)">${Fmt.brl(totV)}</b></div></div>`;
+      <div class="mini-stat" style="font-size:16px"><span class="strong">Custo total da compra</span><b style="color:var(--green)">${Fmt.brl(totV)}</b></div></div>`;
+    if (this.entPagLines.length === 1) this.entPagLines[0].valor = totV; // mantém a 1ª forma igual ao total enquanto houver só uma
+    this.entPagRender();
   },
   entSalvar() {
     if (!this.entradaLines.length) return Toast.err('Adicione ao menos um produto.');
     if (this.entradaLines.some(l => l.qtd <= 0)) return Toast.err('Quantidade deve ser maior que zero.');
-    const data = new Date(fval('ent-data') + 'T12:00:00').toISOString(), obs = fval('ent-obs');
-    const fornId = null, fornNome = '';
-    let totV = 0;
+    const data = new Date(fval('ent-data') + 'T12:00:00').toISOString(), obs = fval('ent-obs'), origem = fval('ent-origem') || 'Caixa da loja';
+    const totV = this.entTotal();
+    // ---- valida pagamento ----
+    const pags = this.entPagLines.filter(p => (+p.valor || 0) > 0);
+    if (!pags.length) return Toast.err('Informe ao menos uma forma de pagamento.');
+    const somaPag = pags.reduce((s, p) => s + (+p.valor || 0), 0);
+    if (Math.abs(somaPag - totV) > 0.01) return Toast.err('A soma das formas de pagamento (' + Fmt.brl(somaPag) + ') deve ser igual ao total da compra (' + Fmt.brl(totV) + ').');
+    const resp = (typeof App !== 'undefined' && App.user() && App.user().nome) ? App.user().nome : 'Admin';
+    // ---- atualiza estoque e custo médio ----
     this.entradaLines.forEach(l => {
       const p = DB.get('produtos', l.produtoId); if (!p) return;
       const qtdNova = p.qtd + l.qtd;
       const custoMedio = qtdNova ? (((p.custoMedio || p.custo || 0) * p.qtd) + (l.custo * l.qtd)) / qtdNova : l.custo;
       const ents = (p.entradas || []).slice();
-      ents.unshift({ data, tipo: 'Entrada de estoque', qtd: l.qtd, custoUnit: l.custo, fornecedor: fornNome, obs, responsavel: (typeof App !== 'undefined' && App.user() && App.user().nome) ? App.user().nome : 'Admin' });
+      ents.unshift({ data, tipo: 'Entrada de estoque', qtd: l.qtd, custoUnit: l.custo, fornecedor: pags.map(x => x.forma).join(' + '), obs, responsavel: resp });
       DB.update('produtos', l.produtoId, { qtd: qtdNova, custo: l.custo, custoMedio: Math.round(custoMedio * 100) / 100, entradas: ents });
-      DB.logMov('compra', 'Entrada de estoque: ' + l.qtd + 'x ' + l.nome + (fornNome ? ' (' + fornNome + ')' : '') + (obs ? ' · ' + obs : ''), { valor: l.qtd * l.custo, data });
-      totV += l.qtd * l.custo;
     });
-    if (fchk('ent-fin') || fchk('ent-prazo')) {
-      const aPrazo = fchk('ent-prazo');
-      const venc = fval('ent-venc') ? (fval('ent-venc') + 'T12:00:00') : data;
-      const descFin = 'Entrada de estoque' + (fornNome ? ' — ' + fornNome : '') + (obs ? ' (' + obs + ')' : '');
-      if (aPrazo) DB.logFin({ tipo: 'saida', categoria: 'Compra de mercadoria', subcategoria: 'A prazo', descricao: descFin, valor: totV, emissao: data, vencimento: venc, data: venc, pago: 0, status: 'pendente', fornecedorId: fornId || null, formaPagamento: 'Boleto', origem: 'compra' });
-      else DB.logFin({ tipo: 'saida', categoria: 'Compra de mercadoria', subcategoria: 'Entrada de estoque', descricao: descFin, valor: totV, emissao: data, vencimento: data, data, pago: totV, status: 'pago', fornecedorId: fornId || null, formaPagamento: 'À vista', origem: 'compra' });
-    }
-    Toast.ok('Entrada registrada! Estoque e custo médio atualizados.');
-    this.entradaLines = []; App.go('estoque');
+    // ---- registro da compra (histórico) ----
+    const compra = DB.insert('compras', {
+      data, responsavel: resp, obs, total: totV, origem: 'entrada', status: 'recebido',
+      origemPagamento: origem, formaPagamento: pags.map(p => p.forma).join(' + '),
+      itens: this.entradaLines.map(l => ({ nome: l.nome, sku: l.sku, produtoId: l.produtoId, qtd: l.qtd, custo: l.custo, condicao: (DB.get('produtos', l.produtoId) || {}).condicao || 'novo' })),
+      pagamentos: pags.map(p => ({ forma: p.forma, valor: +p.valor || 0, parcelas: parseInt(p.parcelas) || null, taxa: +p.taxa || 0, primeiraParcela: p.primeira || null, vencimento: p.venc || null }))
+    });
+    // ---- financeiro por forma de pagamento ----
+    const pend = this.entPendentes();
+    pags.forEach(p => {
+      const val = +p.valor || 0, ehPend = pend.indexOf(p.forma) >= 0;
+      const venc = p.venc ? (p.venc + 'T12:00:00') : (p.primeira ? (p.primeira + 'T12:00:00') : data);
+      const desc = 'Compra' + (obs ? ' (' + obs + ')' : '') + ' · ' + p.forma;
+      const base = { tipo: 'saida', categoria: 'Compra de mercadoria', descricao: desc, valor: val, emissao: data, formaPagamento: p.forma, origemPagamento: origem, origem: 'compra', refId: compra.id };
+      if (ehPend) {
+        DB.logFin(Object.assign(base, { subcategoria: 'A pagar (' + p.forma + ')', pago: 0, status: 'pendente', vencimento: venc, data: venc, parcelas: parseInt(p.parcelas) || null, valorParcela: (parseInt(p.parcelas) > 0) ? Math.round(val / parseInt(p.parcelas) * 100) / 100 : null, taxaOperadora: +p.taxa || 0, primeiraParcela: p.primeira || null }));
+      } else {
+        DB.logFin(Object.assign(base, { subcategoria: 'Entrada de estoque', pago: val, status: 'pago', vencimento: data, data }));
+        if (p.forma === 'Dinheiro' && /caixa/i.test(origem) && typeof Caixa !== 'undefined') Caixa.add({ fluxo: 'saida', tipo: 'Compra de mercadoria', origem: 'Compra', categoria: 'Compra', valor: val, obs: this.entradaLines.map(l => l.qtd + 'x ' + l.nome).join(', '), refId: compra.id });
+      }
+    });
+    DB.logMov('compra', 'Compra lançada — ' + this.entradaLines.map(l => l.qtd + 'x ' + l.nome).join(', ') + ' · ' + pags.map(p => p.forma).join(' + ') + (obs ? ' · ' + obs : ''), { valor: totV, refId: compra.id });
+    Toast.ok('Entrada registrada! Estoque, custo médio e financeiro atualizados.');
+    this.entradaLines = []; this.entPagLines = [{ forma: 'Dinheiro', valor: 0 }]; App.go('estoque');
   },
 
   /* ===================== PDV ===================== */
@@ -2361,11 +2436,12 @@ const Modules = {
     const rows = [];
     cs.forEach(c => (c.itens || []).forEach(i => rows.push({
       data: c.data, nome: i.nome, qtd: i.qtd, custo: i.custo, condicao: i.condicao || 'novo',
-      obs: c.obs || '', resp: c.responsavel || 'Admin', novo: !i.produtoId
+      obs: c.obs || '', resp: c.responsavel || 'Admin', novo: !i.produtoId,
+      forma: c.formaPagamento || '—', origem: c.origemPagamento || ''
     })));
-    return `<div class="page-head"><div><h1>Compras</h1><p>Lançe compras rápido: foco no produto, custo e quantidade</p></div>
-      <div class="actions"><button class="btn-primary" onclick="Modules.compraForm()">+ Nova compra</button></div></div>
-      <div class="table-wrap"><table><thead><tr><th>Data</th><th>Produto</th><th class="num">Qtd</th><th class="num">Custo unit.</th><th class="num">Custo total</th><th>Condição</th><th>Observação</th><th>Responsável</th></tr></thead>
+    return `<div class="page-head"><div><h1>Compras</h1><p>Histórico de compras — produto, custo, pagamento e responsável</p></div>
+      <div class="actions"><button class="btn-ghost" onclick="App.go('entrada')">📥 Entrada de estoque</button><button class="btn-primary" onclick="Modules.compraForm()">+ Nova compra</button></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Data</th><th>Produto</th><th class="num">Qtd</th><th class="num">Custo unit.</th><th class="num">Custo total</th><th>Condição</th><th>Pagamento</th><th>Observação</th><th>Responsável</th></tr></thead>
       <tbody>${rows.map(r => `<tr>
         <td>${Fmt.date(r.data)}</td>
         <td class="strong">${esc(r.nome)} ${r.novo ? '<span class="badge b-blue">novo</span>' : ''}</td>
@@ -2373,8 +2449,9 @@ const Modules = {
         <td class="num">${Fmt.brl(r.custo)}</td>
         <td class="num strong">${Fmt.brl(r.qtd * r.custo)}</td>
         <td>${condB(r.condicao)}</td>
+        <td>${esc(r.forma)}${r.origem ? `<div class="muted" style="font-size:10.5px">${esc(r.origem)}</div>` : ''}</td>
         <td class="muted">${esc(r.obs) || '—'}</td>
-        <td>${esc(r.resp)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted" style="text-align:center;padding:30px">Nenhuma compra lançada ainda.</td></tr>'}</tbody></table></div>`;
+        <td>${esc(r.resp)}</td></tr>`).join('') || '<tr><td colspan="9" class="muted" style="text-align:center;padding:30px">Nenhuma compra lançada ainda.</td></tr>'}</tbody></table></div>`;
   },
   compraItens: [],
   compraTogglePrazo() { const w = document.getElementById('c-venc-wrap'); if (w) w.style.display = fchk('c-prazo') ? 'block' : 'none'; },
@@ -4620,6 +4697,7 @@ Modules.cfgRenderTab = function () {
 };
 Modules.cfgTaxasCard = function () {
   const t = Taxas.all();
+  const extrasFC = ((DB.all('config')[0] || {}).formasCompra) || [];
   return `<div class="card">
     <div class="section-title">💳 Taxas e Pagamentos <a onclick="Modules.cfgAdd()">+ Forma de pagamento</a></div>
     <div class="table-wrap" style="border:none"><table>
@@ -4636,7 +4714,25 @@ Modules.cfgTaxasCard = function () {
         <td class="num">${x.custom ? `<button class="btn-icon" onclick="Modules.cfgDel('${x.id}')">🗑️</button>` : ''}</td>
       </tr>`).join('')}</tbody></table></div>
     <p class="muted" style="margin-top:14px;font-size:12px;line-height:1.6">💡 Maquininha (Crédito/Débito): a taxa é descontada do lucro na hora.<br>🏦 <b>Financeira / Boleto</b> (ex: Brasil Card): a venda vira <b>Conta a Receber</b> — o valor líquido entra no caixa só quando você marcar como recebido, após o prazo em dias.</p>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <div class="section-title">🚚 Formas de pagamento de compras <a onclick="Modules.cfgFormaCompraAdd()">+ Nova forma</a></div>
+    <p class="muted" style="font-size:12px;margin-bottom:10px">Usadas na <b>Entrada de Estoque</b>. As padrão (Dinheiro, PIX, Débito, Crédito à vista, Crédito parcelado, Transferência, Boleto, Consórcio, Outro) já existem. Aqui você adiciona formas próprias.</p>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">${extrasFC.length ? extrasFC.map(f => `<span class="seg-chip">${esc(f)} <span onclick="Modules.cfgFormaCompraDel('${esc(f).replace(/'/g, "\\'")}')" style="color:var(--red);cursor:pointer">✕</span></span>`).join('') : '<span class="muted" style="font-size:12px">Nenhuma forma personalizada ainda.</span>'}</div>
   </div>`;
+};
+Modules.cfgFormaCompraAdd = function () {
+  Modal.open({ title: 'Nova forma de pagamento (compras)', body: `<div class="field"><label>Nome da forma</label><input id="fc-nome" placeholder="Ex: Cartão BNDES, Cheque..."></div>`, foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.cfgFormaCompraSave()">Adicionar</button>` });
+};
+Modules.cfgFormaCompraSave = function () {
+  const nome = (fval('fc-nome') || '').trim(); if (!nome) return Toast.err('Informe o nome da forma.');
+  const cfg = DB.all('config')[0]; const list = ((cfg.formasCompra) || []).slice();
+  if (list.indexOf(nome) < 0) list.push(nome);
+  DB.update('config', cfg.id, { formasCompra: list }); Modal.close(); Toast.ok('Forma adicionada.'); this.cfgRenderTab();
+};
+Modules.cfgFormaCompraDel = function (nome) {
+  const cfg = DB.all('config')[0]; const list = ((cfg.formasCompra) || []).filter(f => f !== nome);
+  DB.update('config', cfg.id, { formasCompra: list }); Toast.ok('Forma removida.'); this.cfgRenderTab();
 };
 
 Modules.cfgImpressoraCard = function () {
@@ -5616,7 +5712,7 @@ function periodOptsHtml(sel) { return [['all', 'Todo o período'], ['hoje', 'Hoj
 
 Modules.biState = { tab: 'geral', trend: 'dia', sel: [], periodo: '30d', de: '', ate: '' };
 Modules.relatorios = function () {
-  const tabs = [['geral', '📊 Visão geral'], ['analiseprod', '🔎 Análise de produto'], ['simulador', '🧮 Simulador'], ['segmentos', '🧩 Segmentos'], ['pagamentos', '💳 Formas de pagamento'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['rentab', '💎 Rentabilidade']];
+  const tabs = [['geral', '📊 Visão geral'], ['analiseprod', '🔎 Análise de produto'], ['simulador', '🧮 Simulador'], ['segmentos', '🧩 Segmentos'], ['pagamentos', '💳 Formas de pagamento'], ['compraspg', '🚚 Compras'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['rentab', '💎 Rentabilidade']];
   const st = this.biState, r = BI.range(st.periodo, st.de, st.ate);
   setTimeout(() => Modules.biRender(), 20);
   return `
@@ -5666,7 +5762,7 @@ Modules.biRangeCtx = function () {
 Modules.biInit = function () { this.biRender(); };
 Modules.biSetTab = function (t) {
   this.biState.tab = t;
-  const keys = ['geral', 'analiseprod', 'simulador', 'segmentos', 'pagamentos', 'rankings', 'pesquisa', 'rentab'];
+  const keys = ['geral', 'analiseprod', 'simulador', 'segmentos', 'pagamentos', 'compraspg', 'rankings', 'pesquisa', 'rentab'];
   document.querySelectorAll('#bi-subnav .tab').forEach((el, i) => el.classList.toggle('active', keys[i] === t));
   this.biRender();
 };
@@ -5674,7 +5770,7 @@ Modules.biRender = function () {
   const b = document.getElementById('bi-body'); if (!b) return;
   const t = this.biState.tab;
   try {
-    b.innerHTML = ({ geral: this.biGeral, analiseprod: this.biAnaliseProd, simulador: this.biSimulador, segmentos: this.biSegmentos, pagamentos: this.biPagamentos, rankings: this.biRankings, pesquisa: this.biPesquisa, rentab: this.biRentab })[t].call(this);
+    b.innerHTML = ({ geral: this.biGeral, analiseprod: this.biAnaliseProd, simulador: this.biSimulador, segmentos: this.biSegmentos, pagamentos: this.biPagamentos, compraspg: this.biCompras, rankings: this.biRankings, pesquisa: this.biPesquisa, rentab: this.biRentab })[t].call(this);
     if (t === 'pesquisa') this.biCompara();
     if (t === 'simulador') this.simRecalc();
   } catch (e) {
@@ -6153,6 +6249,39 @@ Modules.biPagExport = function () {
   Exporter.xlsx('formas-pagamento-' + new Date().toISOString().slice(0, 10) + '.xlsx', 'Pagamentos', aoa);
 };
 
+
+/* ---- COMPRAS POR FORMA DE PAGAMENTO ---- */
+Modules.cpgState = { periodo: 'mes', de: '', ate: '' };
+Modules.cpgSet = function (v) { this.cpgState.periodo = v; this.biRender(); };
+Modules.biCompras = function () {
+  const S = this.cpgState;
+  const r = BI.range(S.periodo, S.de, S.ate);
+  const custom = S.periodo === 'custom' ? `<span style="display:inline-flex;gap:6px;align-items:center"><input type="date" id="cpg-de" value="${S.de}" onchange="Modules.cpgState.de=this.value;Modules.biRender()"><span class="muted">até</span><input type="date" id="cpg-ate" value="${S.ate}" onchange="Modules.cpgState.ate=this.value;Modules.biRender()"></span>` : '';
+  const bar = `<div class="bi-periodbar"><select id="cpg-per" onchange="Modules.cpgSet(this.value)">${periodOptsHtml(S.periodo)}</select> ${custom}<div class="bi-pb-label">📅 <b>${esc(BI.periodoLabel(S.periodo, r))}</b></div></div>`;
+  const compras = DB.all('compras').filter(c => { const d = new Date(c.data); return d >= r.start && d <= r.end; });
+  if (!compras.length) return bar + '<div class="empty-state"><div class="big">🚚</div>Nenhuma compra registrada no período.</div>';
+  const porForma = {}, porOrigem = {}; let total = 0;
+  compras.forEach(c => {
+    const pags = (c.pagamentos && c.pagamentos.length) ? c.pagamentos : [{ forma: c.formaPagamento || '—', valor: c.total || 0 }];
+    pags.forEach(p => { const f = p.forma || '—'; porForma[f] = (porForma[f] || 0) + (p.valor || 0); total += (p.valor || 0); });
+    const o = c.origemPagamento || '—'; porOrigem[o] = (porOrigem[o] || 0) + (c.total || 0);
+  });
+  const formas = Object.entries(porForma).map(([f, v]) => ({ f, v, pct: total ? v / total * 100 : 0 })).sort((a, b) => b.v - a.v);
+  const origens = Object.entries(porOrigem).map(([o, v]) => ({ o, v })).sort((a, b) => b.v - a.v);
+  const PAL = ['#5b8cff', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#14b8a6', '#ec4899', '#64748b'];
+  const chart = (typeof Modules.apBars === 'function') ? Modules.apBars(formas.map(x => x.f), formas.map(x => x.v), '#5b8cff') : '';
+  const kpi = (l, v) => `<div class="ap-kpi"><span>${l}</span><b>${v}</b></div>`;
+  return bar
+    + `<div class="ap-kpis" style="margin-bottom:14px">${kpi('Total comprado', Fmt.brl(total))}${kpi('Nº de compras', compras.length)}${kpi('Forma mais usada', formas[0] ? esc(formas[0].f) : '—')}${kpi('Formas distintas', formas.length)}</div>`
+    + `<div class="card"><div class="section-title">Compras por forma de pagamento</div>
+      <div class="table-wrap"><table><thead><tr><th>Forma</th><th class="num">Total</th><th class="num">% do total</th></tr></thead>
+      <tbody>${formas.map((x, i) => `<tr><td><span class="bdot" style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${PAL[i % 8]};margin-right:7px"></span>${esc(x.f)}</td><td class="num strong">${Fmt.brl(x.v)}</td><td class="num">${Fmt.pct(x.pct)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr style="font-weight:700;border-top:2px solid var(--line)"><td>Total</td><td class="num">${Fmt.brl(total)}</td><td class="num">100%</td></tr></tfoot></table></div>
+      ${chart}</div>`
+    + `<div class="card"><div class="section-title">Por origem do pagamento</div>
+      <div class="table-wrap"><table><thead><tr><th>Origem</th><th class="num">Total</th></tr></thead>
+      <tbody>${origens.map(x => `<tr><td>${esc(x.o)}</td><td class="num strong">${Fmt.brl(x.v)}</td></tr>`).join('')}</tbody></table></div></div>`;
+};
 
 </script>
   <script>
