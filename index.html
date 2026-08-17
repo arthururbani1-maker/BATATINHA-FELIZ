@@ -588,6 +588,13 @@ td .muted,.muted{color:var(--txt-3)}
 .ent-pagextra input{padding:6px 8px;font-size:13px}
 .ent-pagcalc{font-size:12px;color:var(--txt-2);align-self:center}
 
+/* ===== Análise de Produtos (multi) ===== */
+.mp-bests{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:6px}
+.mp-best{background:var(--bg-2);border:1px solid var(--border);border-radius:12px;padding:12px 13px}
+.mp-best-h{font-size:11.5px;color:var(--txt-3);font-weight:700}
+.mp-best-p{font-size:15px;font-weight:700;margin:4px 0 2px}
+.mp-best-v{font-size:12.5px;color:var(--txt-2)}
+
 </style>
   <script>
     /* Aplica o tema o quanto antes para evitar "flash" ao carregar */
@@ -658,7 +665,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 5.7 · pagamento na entrada</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 5.8 · análise de produtos</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -5712,7 +5719,7 @@ function periodOptsHtml(sel) { return [['all', 'Todo o período'], ['hoje', 'Hoj
 
 Modules.biState = { tab: 'geral', trend: 'dia', sel: [], periodo: '30d', de: '', ate: '' };
 Modules.relatorios = function () {
-  const tabs = [['geral', '📊 Visão geral'], ['analiseprod', '🔎 Análise de produto'], ['simulador', '🧮 Simulador'], ['segmentos', '🧩 Segmentos'], ['pagamentos', '💳 Formas de pagamento'], ['compraspg', '🚚 Compras'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['rentab', '💎 Rentabilidade']];
+  const tabs = [['geral', '📊 Visão geral'], ['analiseprod', '🔎 Análise de produto'], ['comparaprod', '⚖️ Análise de produtos'], ['simulador', '🧮 Simulador'], ['segmentos', '🧩 Segmentos'], ['pagamentos', '💳 Formas de pagamento'], ['compraspg', '🚚 Compras'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['rentab', '💎 Rentabilidade']];
   const st = this.biState, r = BI.range(st.periodo, st.de, st.ate);
   setTimeout(() => Modules.biRender(), 20);
   return `
@@ -5762,7 +5769,7 @@ Modules.biRangeCtx = function () {
 Modules.biInit = function () { this.biRender(); };
 Modules.biSetTab = function (t) {
   this.biState.tab = t;
-  const keys = ['geral', 'analiseprod', 'simulador', 'segmentos', 'pagamentos', 'compraspg', 'rankings', 'pesquisa', 'rentab'];
+  const keys = ['geral', 'analiseprod', 'comparaprod', 'simulador', 'segmentos', 'pagamentos', 'compraspg', 'rankings', 'pesquisa', 'rentab'];
   document.querySelectorAll('#bi-subnav .tab').forEach((el, i) => el.classList.toggle('active', keys[i] === t));
   this.biRender();
 };
@@ -5770,7 +5777,7 @@ Modules.biRender = function () {
   const b = document.getElementById('bi-body'); if (!b) return;
   const t = this.biState.tab;
   try {
-    b.innerHTML = ({ geral: this.biGeral, analiseprod: this.biAnaliseProd, simulador: this.biSimulador, segmentos: this.biSegmentos, pagamentos: this.biPagamentos, compraspg: this.biCompras, rankings: this.biRankings, pesquisa: this.biPesquisa, rentab: this.biRentab })[t].call(this);
+    b.innerHTML = ({ geral: this.biGeral, analiseprod: this.biAnaliseProd, comparaprod: this.biMultiProd, simulador: this.biSimulador, segmentos: this.biSegmentos, pagamentos: this.biPagamentos, compraspg: this.biCompras, rankings: this.biRankings, pesquisa: this.biPesquisa, rentab: this.biRentab })[t].call(this);
     if (t === 'pesquisa') this.biCompara();
     if (t === 'simulador') this.simRecalc();
   } catch (e) {
@@ -7018,6 +7025,122 @@ Modules.apExport = function (fmt) {
     const tr = D.rows.map(x => `<tr><td>${Fmt.date(x.data)}</td><td>${esc(x.numero)}</td><td class="num">${x.qtd}</td><td class="num">${Fmt.brl(x.precoUnit)}</td><td class="num">${Fmt.brl(x.valorItem)}</td><td>${esc(x.forma)}</td><td class="num">${Fmt.brl(x.lucroLiq)}</td><td class="num">${Fmt.pct(x.margem)}</td></tr>`).join('');
     Exporter.pdf('Análise de Produto — ' + prod.nome + ' · ' + label, kpis + `<table><thead><tr><th>Data</th><th>Venda</th><th class="num">Qtd</th><th class="num">Preço un</th><th class="num">Total</th><th>Pagamento</th><th class="num">Lucro líq</th><th class="num">Margem</th></tr></thead><tbody>${tr}</tbody></table>`);
   }
+};
+
+/* ============ Análise de Produtos (comparação multi-produto) ============ */
+Modules.mpState = { skus: [], periodo: '30d', de: '', ate: '', sort: 'liq', dir: -1 };
+Modules.mpSetPeriodo = function (v) { this.mpState.periodo = v; this.biRender(); };
+Modules.mpBusca = function () {
+  const q = (fval('mp-busca') || '').toLowerCase(), drop = document.getElementById('mp-drop'); if (!drop) return;
+  if (!q) { drop.classList.remove('show'); drop.innerHTML = ''; return; }
+  const list = DB.all('produtos').filter(p => this.mpState.skus.indexOf(p.sku) < 0 && (p.nome.toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q) || (p.barcode || '').includes(q))).slice(0, 12);
+  drop.innerHTML = list.length ? list.map(p => `<div class="ms-opt" onmousedown="event.preventDefault();Modules.mpAdd('${esc(p.sku)}')"><span>${esc(p.nome)}</span><span class="o-sku">${esc(p.sku)} · ${p.qtd || 0} un</span></div>`).join('') : '<div class="ms-empty">Nenhum produto encontrado.</div>';
+  drop.classList.add('show');
+};
+Modules.mpAdd = function (sku) { if (this.mpState.skus.indexOf(sku) < 0) this.mpState.skus.push(sku); const d = document.getElementById('mp-drop'); if (d) { d.classList.remove('show'); d.innerHTML = ''; } this.biRender(); };
+Modules.mpDel = function (sku) { this.mpState.skus = this.mpState.skus.filter(s => s !== sku); this.biRender(); };
+Modules.mpSort = function (k) { const S = this.mpState; if (S.sort === k) S.dir = -S.dir; else { S.sort = k; S.dir = -1; } this.biRender(); };
+Modules.mpConsolidado = function (skuSet, r) {
+  const vendas = DB.all('vendas').filter(v => !v.cancelada && (() => { const d = new Date(v.data); return d >= r.start && d <= r.end; })());
+  let qtd = 0, receita = 0, custo = 0, taxa = 0; const sales = new Set();
+  vendas.forEach(v => {
+    const vtax = v.taxaTotal != null ? v.taxaTotal : 0, vtot = v.total || (v.itens || []).reduce((s, i) => s + i.preco * i.qtd, 0) || 1; let hit = false;
+    (v.itens || []).forEach(i => { if (!skuSet.has(i.sku)) return; hit = true; const p = BI.prodInfo(i.sku) || {}; const cu = (i.custo > 0) ? i.custo : (p.custoMedio || p.custo || 0); qtd += i.qtd; receita += i.preco * i.qtd; custo += cu * i.qtd; taxa += vtax * (i.preco * i.qtd / vtot); });
+    if (hit) sales.add(v.id);
+  });
+  const bruto = receita - custo, liq = bruto - taxa;
+  return { qtd, receita, custo, taxa, bruto, liq, margemV: receita ? liq / receita * 100 : 0, margemC: custo ? liq / custo * 100 : 0, nv: sales.size, ticket: sales.size ? receita / sales.size : 0 };
+};
+Modules.biMultiProd = function () {
+  const S = this.mpState, canFin = App.canFinance();
+  const periodSel = `<select id="mp-periodo" onchange="Modules.mpSetPeriodo(this.value)">${this.apPeriodos.map(o => `<option value="${o[0]}" ${S.periodo === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>`;
+  const custom = S.periodo === 'custom' ? `<span style="display:inline-flex;gap:6px;align-items:center"><input type="date" id="mp-de" value="${S.de}" onchange="Modules.mpState.de=this.value;Modules.biRender()"><span class="muted">até</span><input type="date" id="mp-ate" value="${S.ate}" onchange="Modules.mpState.ate=this.value;Modules.biRender()"></span>` : '';
+  const chips = S.skus.map(sku => { const p = BI.prodInfo(sku) || { nome: sku }; return `<span class="seg-chip">${esc(p.nome)} <span onclick="Modules.mpDel('${esc(sku)}')" style="color:var(--red);cursor:pointer">✕</span></span>`; }).join('');
+  const filtros = `<div class="card"><div class="section-title">Selecionar produtos <span class="muted" style="font-weight:500">· ${S.skus.length} selecionado(s)</span></div>
+    <div class="ap-filtros">
+      <div class="ap-search"><input id="mp-busca" placeholder="🔎 Buscar produto para adicionar..." oninput="Modules.mpBusca()" onfocus="Modules.mpBusca()" autocomplete="off"><div id="mp-drop" class="ap-drop"></div></div>
+      ${periodSel} ${custom}
+    </div>
+    ${chips ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px">${chips}</div>` : '<p class="muted" style="font-size:12.5px;margin-top:10px">Adicione produtos para comparar (4 ou mais).</p>'}
+  </div>`;
+  if (!S.skus.length) return filtros + '<div class="empty-state"><div class="big">⚖️</div>Selecione produtos acima para ver a análise consolidada e individual.</div>';
+
+  const r = BI.range(S.periodo, S.de, S.ate), label = BI.periodoLabel(S.periodo, r);
+  const rows = S.skus.map(sku => { const p = BI.prodInfo(sku) || { nome: sku, sku }; const T = this.apCompute(sku, r).T; return { sku, nome: p.nome, T }; });
+  const C = this.mpConsolidado(new Set(S.skus), r);
+  const sem = m => (Modules.simSem ? Modules.simSem(m) : { c: 'var(--txt)' });
+
+  // ordenação
+  const key = S.sort, getV = x => key === 'nome' ? x.nome : (x.T[key] != null ? x.T[key] : 0);
+  const sorted = rows.slice().sort((a, b) => key === 'nome' ? a.nome.localeCompare(b.nome) * (S.dir) : (getV(b) - getV(a)) * (S.dir < 0 ? 1 : -1));
+  const arrow = k => S.sort === k ? (S.dir < 0 ? ' ▼' : ' ▲') : '';
+  const th = (k, lbl, cls) => `<th class="${cls || ''}" style="cursor:pointer" onclick="Modules.mpSort('${k}')">${lbl}${arrow(k)}</th>`;
+
+  // KPIs consolidados
+  const kpi = (l, v, c) => `<div class="ap-kpi"><span>${l}</span><b${c ? ` style="color:${c}"` : ''}>${v}</b></div>`;
+  const resumo = `<div class="section-title" style="margin:14px 0 8px">Resumo consolidado <span class="muted" style="font-weight:500">· ${esc(label)}</span></div>
+    <div class="ap-kpis">
+      ${kpi('Qtd vendida', C.qtd + ' un')}
+      ${kpi('Faturamento', Fmt.brl(C.receita))}
+      ${canFin ? kpi('Custo total', Fmt.brl(C.custo)) : ''}
+      ${canFin ? kpi('Lucro bruto', Fmt.brl(C.bruto)) : ''}
+      ${canFin ? kpi('Taxas', Fmt.brl(C.taxa), 'var(--red)') : ''}
+      ${canFin ? kpi('Lucro líquido', Fmt.brl(C.liq), C.liq >= 0 ? 'var(--green)' : 'var(--red)') : ''}
+      ${canFin ? kpi('Margem líquida', Fmt.pct(C.margemV), sem(C.margemV).c) : ''}
+      ${canFin ? kpi('Margem s/ custo', Fmt.pct(C.margemC)) : ''}
+      ${kpi('Ticket médio', Fmt.brl(C.ticket))}
+    </div>`;
+
+  // tabela por produto
+  const tabela = `<div class="card"><div class="section-title">Detalhamento por produto</div>
+    <div class="table-wrap"><table><thead><tr>${th('nome', 'Produto')}${th('qtd', 'Qtd', 'num')}${canFin ? th('custo', 'Custo', 'num') : ''}${th('receita', 'Faturamento', 'num')}${canFin ? th('liq', 'Lucro líquido', 'num') : ''}${canFin ? th('margemV', 'Margem', 'num') : ''}</tr></thead>
+    <tbody>${sorted.map(x => `<tr${x.T.qtd === 0 ? ' style="opacity:.6"' : ''}>
+      <td class="strong">${esc(x.nome)}${x.T.qtd === 0 ? ' <span class="badge b-gray">0 vendas</span>' : ''}</td>
+      <td class="num">${x.T.qtd}</td>
+      ${canFin ? `<td class="num muted">${Fmt.brl(x.T.custo)}</td>` : ''}
+      <td class="num strong">${Fmt.brl(x.T.receita)}</td>
+      ${canFin ? `<td class="num" style="color:${x.T.liq >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(x.T.liq)}</td>` : ''}
+      ${canFin ? `<td class="num">${x.T.qtd ? Fmt.pct(x.T.margemV) : '—'}</td>` : ''}</tr>`).join('')}</tbody>
+    <tfoot><tr style="font-weight:700;border-top:2px solid var(--line)"><td>Total</td><td class="num">${C.qtd}</td>${canFin ? `<td class="num">${Fmt.brl(C.custo)}</td>` : ''}<td class="num">${Fmt.brl(C.receita)}</td>${canFin ? `<td class="num">${Fmt.brl(C.liq)}</td>` : ''}${canFin ? `<td class="num">${Fmt.pct(C.margemV)}</td>` : ''}</tr></tfoot></table></div></div>`;
+
+  // gráficos (ordenados por valor desc para leitura)
+  const byVal = (mapFn) => rows.slice().map(x => ({ label: x.nome, value: mapFn(x) })).sort((a, b) => b.value - a.value);
+  const graf = `<div class="card"><div class="section-title">Comparação visual</div>
+    <div class="ap-graf-t">Faturamento por produto</div>${this.apBars(byVal(x => x.T.receita).map(x => x.label), byVal(x => x.T.receita).map(x => x.value), '#5b8cff')}
+    ${canFin ? `<div class="ap-graf-t" style="margin-top:14px">Lucro líquido por produto</div>${this.apBars(byVal(x => x.T.liq).map(x => x.label), byVal(x => x.T.liq).map(x => x.value), '#22c55e')}` : ''}
+    <div class="ap-graf-t" style="margin-top:14px">Quantidade vendida</div>${this.apBars(byVal(x => x.T.qtd).map(x => x.label), byVal(x => x.T.qtd).map(x => x.value), '#a855f7')}</div>`;
+
+  // melhor desempenho
+  const withSales = rows.filter(x => x.T.qtd > 0);
+  let best = '';
+  if (withSales.length) {
+    const top = (fn) => withSales.slice().sort((a, b) => fn(b) - fn(a))[0];
+    const bFat = top(x => x.T.receita), bLiq = top(x => x.T.liq), bMar = top(x => x.T.margemV), bQtd = top(x => x.T.qtd);
+    const bc = (ico, lbl, nome, val) => `<div class="mp-best"><div class="mp-best-h">${ico} ${lbl}</div><div class="mp-best-p">${esc(nome)}</div><div class="mp-best-v">${val}</div></div>`;
+    best = `<div class="section-title" style="margin:14px 0 8px">🏆 Melhor desempenho</div><div class="mp-bests">
+      ${bc('💵', 'Maior faturamento', bFat.nome, Fmt.brl(bFat.T.receita))}
+      ${canFin ? bc('💎', 'Maior lucro líquido', bLiq.nome, Fmt.brl(bLiq.T.liq)) : ''}
+      ${canFin ? bc('📐', 'Maior margem', bMar.nome, Fmt.pct(bMar.T.margemV)) : ''}
+      ${bc('📦', 'Maior quantidade', bQtd.nome, bQtd.T.qtd + ' un')}
+    </div>`;
+  }
+
+  // análise inteligente
+  const ins = this.mpInsights(rows, C, canFin);
+  const analise = `<div class="card"><div class="section-title">🧠 Análise</div>${ins.map(t => `<div class="ap-ins ${t.t}">${t.e} ${t.txt}</div>`).join('')}</div>`;
+
+  return filtros + resumo + best + graf + tabela + analise;
+};
+Modules.mpInsights = function (rows, C, canFin) {
+  const out = [], withSales = rows.filter(x => x.T.qtd > 0), zero = rows.filter(x => x.T.qtd === 0);
+  if (!withSales.length) { out.push({ t: 'analise', e: '🟡', txt: 'Nenhum dos produtos selecionados teve vendas no período.' }); return out; }
+  const top = (fn) => withSales.slice().sort((a, b) => fn(b) - fn(a))[0];
+  const bLiq = top(x => x.T.liq), bMar = top(x => x.T.margemV), bFat = top(x => x.T.receita), bQtd = top(x => x.T.qtd);
+  if (canFin && bLiq && bMar) out.push({ t: 'op', e: '🟢', txt: `Entre os selecionados, <b>${esc(bLiq.nome)}</b> teve o maior lucro líquido (${Fmt.brl(bLiq.T.liq)})${bMar.sku !== bLiq.sku ? `, enquanto <b>${esc(bMar.nome)}</b> teve a maior margem (${Fmt.pct(bMar.T.margemV)})` : ''}.` });
+  if (canFin && bFat && bMar && bFat.sku !== bMar.sku && bFat.T.margemV < bMar.T.margemV) out.push({ t: 'analise', e: '🟡', txt: `Apesar de <b>${esc(bFat.nome)}</b> ter o maior faturamento (${Fmt.brl(bFat.T.receita)}), sua margem (${Fmt.pct(bFat.T.margemV)}) é inferior à de <b>${esc(bMar.nome)}</b> (${Fmt.pct(bMar.T.margemV)}).` });
+  if (!canFin) out.push({ t: 'op', e: '🟢', txt: `<b>${esc(bQtd.nome)}</b> foi o que mais vendeu (${bQtd.T.qtd} un) e <b>${esc(bFat.nome)}</b> o que mais faturou (${Fmt.brl(bFat.T.receita)}).` });
+  if (zero.length) out.push({ t: 'risco', e: '🔴', txt: `${zero.length === 1 ? 'O produto' : 'Os produtos'} ${zero.map(x => '"' + esc(x.nome) + '"').join(', ')} ${zero.length === 1 ? 'não teve' : 'não tiveram'} nenhuma venda no período.` });
+  return out;
 };
 
 </script>
