@@ -665,7 +665,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 5.8 · análise de produtos</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 5.9 · cupom mais escuro</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -1456,7 +1456,9 @@ const Print = {
     opts = opts || {};
     const printer = this.cfg();
     const mm = (opts.papel || printer.papel) === '58' ? 58 : 80;
-    const fs = mm === 58 ? 10 : 11;
+    const inten = printer.intensidade || 'escura';
+    const bodyWeight = inten === 'normal' ? 400 : (inten === 'extra' ? 800 : 700);
+    const fs = (mm === 58 ? 10 : 11) + (inten === 'extra' ? 1 : 0);
     const cup = (v && v.cupom && v.cupom.cfg) ? v.cupom.cfg : (typeof Cupom !== 'undefined' ? Cupom.get() : Cupom.defaults());
     const gar = (v && v.cupom && v.cupom.itens) ? v.cupom.itens : (typeof Cupom !== 'undefined' ? Cupom.snapshot(v).itens : []);
     const C = cup.campos || {};
@@ -1512,7 +1514,7 @@ const Print = {
       <style>
         @page { size: ${mm}mm auto; margin: 0; }
         * { box-sizing: border-box; }
-        body { width: ${mm}mm; margin: 0 auto; padding: 4px 6px 8px; font-family: 'Courier New', monospace; color: #000; font-size: ${fs}px; line-height: 1.25; }
+        body { width: ${mm}mm; margin: 0 auto; padding: 4px 6px 8px; font-family: 'Courier New', monospace; color: #000; font-size: ${fs}px; font-weight: ${bodyWeight}; line-height: 1.3; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         .c { text-align: center; } .b { font-weight: bold; }
         .store { font-size: ${mm === 58 ? 15 : 18}px; font-weight: bold; letter-spacing: 1px; }
         .sec { font-weight: bold; text-align: center; margin: 1px 0; }
@@ -4751,13 +4753,14 @@ Modules.cfgImpressoraCard = function () {
     <div class="form-grid">
       <div class="field"><label>Largura do papel</label><select onchange="Modules.cfgPrintSet('papel',this.value)">${opt('80', p.papel, '80 mm (padrão)')}${opt('58', p.papel, '58 mm (compacta)')}</select></div>
       <div class="field"><label>Quando imprimir</label><select onchange="Modules.cfgPrintSet('modo',this.value)">${opt('auto', p.modo, 'Imprimir automaticamente após a venda')}${opt('ask', p.modo, 'Perguntar antes de imprimir')}${opt('off', p.modo, 'Não imprimir automaticamente')}</select></div>
+      <div class="field"><label>Intensidade da impressão <span class="muted" style="font-weight:400;font-size:11px">letra mais escura</span></label><select onchange="Modules.cfgPrintSet('intensidade',this.value)">${opt('normal', p.intensidade || 'escura', 'Normal')}${opt('escura', p.intensidade || 'escura', 'Escura (recomendado)')}${opt('extra', p.intensidade || 'escura', 'Extra escura (negrito + maior)')}</select></div>
       <div class="field"><label>Corte automático</label><label style="display:inline-flex;align-items:center;gap:8px;padding-top:8px;font-size:13px;color:var(--txt-2)"><input type="checkbox" ${p.corte ? 'checked' : ''} onchange="Modules.cfgPrintSet('corte',this.checked)"> Cortar papel ao final</label></div>
       <div class="field"><label>Gaveta de dinheiro</label><label style="display:inline-flex;align-items:center;gap:8px;padding-top:8px;font-size:13px;color:var(--txt-2)"><input type="checkbox" ${p.gaveta ? 'checked' : ''} onchange="Modules.cfgPrintSet('gaveta',this.checked)"> Abrir gaveta automaticamente</label></div>
     </div>
     <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
       <button class="btn-primary" onclick="Print.test()">🖨️ Testar impressão</button>
     </div>
-    <p class="muted" style="margin-top:12px;font-size:12px;line-height:1.6">O cupom abre na janela de impressão do navegador — escolha a impressora <b>Elgin</b> (instalada no Windows/Mac) e marque para lembrar como padrão. Dica: nas opções do navegador, ajuste margens para "Nenhuma" e desmarque cabeçalho/rodapé para o cupom sair limpo. Corte e gaveta automáticos dependem do driver da Elgin instalado no computador.</p>
+    <p class="muted" style="margin-top:12px;font-size:12px;line-height:1.6">O cupom abre na janela de impressão do navegador — escolha a impressora <b>Elgin</b> (instalada no Windows/Mac) e marque para lembrar como padrão. Dica: nas opções do navegador, ajuste margens para "Nenhuma" e desmarque cabeçalho/rodapé para o cupom sair limpo. Corte e gaveta automáticos dependem do driver da Elgin instalado no computador.<br><br>🖨️ <b>Saiu fraco?</b> Use a <b>Intensidade "Escura"</b> ou "Extra escura" acima (deixa a letra em negrito, marca bem mais). Se ainda ficar fraco, aumente a <b>densidade/escurecimento no driver da Elgin</b> (Preferências de impressão → Densidade/Qualidade) e confira se o papel térmico é de boa qualidade.</p>
   </div>`;
 };
 Modules.cfgPrintSet = function (field, value) {
