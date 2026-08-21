@@ -665,7 +665,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 5.9 · cupom mais escuro</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 6.1 · compra em dinheiro no caixa</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -1538,6 +1538,7 @@ const Print = {
       ${C.pagamento ? `${hr}<div class="sec">PAGAMENTO</div>${pagLinhas}<div class="row"><span>Valor pago:</span><span>${Fmt.brl(recebido)}</span></div>${troco > 0 ? `<div class="row"><span>Troco:</span><span>${Fmt.brl(troco)}</span></div>` : ''}` : ''}
       ${garHtml}
       ${seriais.length ? `${hr}${seriais.map(s => `<div>S/N: ${esc(s)}</div>`).join('')}` : ''}
+      ${C.assinatura ? `${hr}${cup.assinaturaTexto ? `<div style="font-size:${fs - 1}px;line-height:1.35;margin-bottom:4px">${esc(cup.assinaturaTexto)}</div>` : ''}<div style="height:30px"></div><div style="border-top:1px solid #000;width:85%;margin:0 auto"></div><div class="c" style="margin-top:2px">Assinatura do cliente</div><div style="margin-top:10px;font-size:${fs - 1}px">Nome: ______________________________</div><div style="font-size:${fs - 1}px;margin-top:4px">CPF: __________________  Data: ___/___/______</div>` : ''}
       ${C.qrcode ? `<div class="qr"><div class="qrbox">COD: ${num}</div></div>` : ''}
       ${C.rodape && cup.agradecimento ? `${hr}<div class="c b">${esc(cup.agradecimento)}</div><div class="c b">${esc(cup.loja)}</div>` : ''}
       ${printScript}
@@ -2000,7 +2001,9 @@ const Modules = {
         DB.logFin(Object.assign(base, { subcategoria: 'A pagar (' + p.forma + ')', pago: 0, status: 'pendente', vencimento: venc, data: venc, parcelas: parseInt(p.parcelas) || null, valorParcela: (parseInt(p.parcelas) > 0) ? Math.round(val / parseInt(p.parcelas) * 100) / 100 : null, taxaOperadora: +p.taxa || 0, primeiraParcela: p.primeira || null }));
       } else {
         DB.logFin(Object.assign(base, { subcategoria: 'Entrada de estoque', pago: val, status: 'pago', vencimento: data, data }));
-        if (p.forma === 'Dinheiro' && /caixa/i.test(origem) && typeof Caixa !== 'undefined') Caixa.add({ fluxo: 'saida', tipo: 'Compra de mercadoria', origem: 'Compra', categoria: 'Compra', valor: val, obs: this.entradaLines.map(l => l.qtd + 'x ' + l.nome).join(', '), refId: compra.id });
+        // Pagamento em DINHEIRO → sai do caixa físico da loja (além da despesa no Financeiro).
+        // Vinculado à compra por refId; um único lançamento por forma (sem duplicar).
+        if (p.forma === 'Dinheiro' && typeof Caixa !== 'undefined') Caixa.add({ fluxo: 'saida', tipo: 'Compra de estoque', origem: 'Entrada de estoque #' + String(compra.id).slice(-6).toUpperCase(), categoria: 'Compra de estoque', valor: val, data, forma: 'Dinheiro', obs: this.entradaLines.map(l => l.qtd + 'x ' + l.nome).join(', ') + (obs ? ' · ' + obs : ''), refId: compra.id });
       }
     });
     DB.logMov('compra', 'Compra lançada — ' + this.entradaLines.map(l => l.qtd + 'x ' + l.nome).join(', ') + ' · ' + pags.map(p => p.forma).join(' + ') + (obs ? ' · ' + obs : ''), { valor: totV, refId: compra.id });
@@ -2443,24 +2446,42 @@ const Modules = {
     const cs = DB.all('compras').slice().sort((a, b) => new Date(b.data) - new Date(a.data));
     const condB = c => condBadge(c || 'novo');
     const rows = [];
-    cs.forEach(c => (c.itens || []).forEach(i => rows.push({
+    const seen = {}; const adm = App.isAdmin() || App.can('podeCancelar');
+    cs.forEach(c => (c.itens || []).forEach(i => { const first = !seen[c.id]; seen[c.id] = 1; rows.push({
+      compraId: c.id, cancelada: !!c.cancelada, first,
       data: c.data, nome: i.nome, qtd: i.qtd, custo: i.custo, condicao: i.condicao || 'novo',
       obs: c.obs || '', resp: c.responsavel || 'Admin', novo: !i.produtoId,
       forma: c.formaPagamento || '—', origem: c.origemPagamento || ''
-    })));
+    }); }));
     return `<div class="page-head"><div><h1>Compras</h1><p>Histórico de compras — produto, custo, pagamento e responsável</p></div>
       <div class="actions"><button class="btn-ghost" onclick="App.go('entrada')">📥 Entrada de estoque</button><button class="btn-primary" onclick="Modules.compraForm()">+ Nova compra</button></div></div>
-      <div class="table-wrap"><table><thead><tr><th>Data</th><th>Produto</th><th class="num">Qtd</th><th class="num">Custo unit.</th><th class="num">Custo total</th><th>Condição</th><th>Pagamento</th><th>Observação</th><th>Responsável</th></tr></thead>
-      <tbody>${rows.map(r => `<tr>
+      <div class="table-wrap"><table><thead><tr><th>Data</th><th>Produto</th><th class="num">Qtd</th><th class="num">Custo unit.</th><th class="num">Custo total</th><th>Condição</th><th>Pagamento</th><th>Observação</th><th>Responsável</th>${adm ? '<th></th>' : ''}</tr></thead>
+      <tbody>${rows.map(r => `<tr${r.cancelada ? ' style="opacity:.55"' : ''}>
         <td>${Fmt.date(r.data)}</td>
-        <td class="strong">${esc(r.nome)} ${r.novo ? '<span class="badge b-blue">novo</span>' : ''}</td>
+        <td class="strong">${esc(r.nome)} ${r.novo ? '<span class="badge b-blue">novo</span>' : ''}${r.cancelada && r.first ? ' <span class="badge b-red">Cancelada</span>' : ''}</td>
         <td class="num">${r.qtd}</td>
         <td class="num">${Fmt.brl(r.custo)}</td>
         <td class="num strong">${Fmt.brl(r.qtd * r.custo)}</td>
         <td>${condB(r.condicao)}</td>
         <td>${esc(r.forma)}${r.origem ? `<div class="muted" style="font-size:10.5px">${esc(r.origem)}</div>` : ''}</td>
         <td class="muted">${esc(r.obs) || '—'}</td>
-        <td>${esc(r.resp)}</td></tr>`).join('') || '<tr><td colspan="9" class="muted" style="text-align:center;padding:30px">Nenhuma compra lançada ainda.</td></tr>'}</tbody></table></div>`;
+        <td>${esc(r.resp)}</td>
+        ${adm ? `<td class="num">${r.first && !r.cancelada ? `<button class="btn-icon" title="Cancelar/estornar esta compra" onclick="Modules.compraCancelar('${r.compraId}')">✕</button>` : ''}</td>` : ''}</tr>`).join('') || `<tr><td colspan="${adm ? 10 : 9}" class="muted" style="text-align:center;padding:30px">Nenhuma compra lançada ainda.</td></tr>`}</tbody></table></div>`;
+  },
+  compraCancelar(id) {
+    if (!(App.isAdmin() || App.can('podeCancelar'))) return Toast.err('Você não tem permissão para cancelar compras.');
+    Modal.confirm('Cancelar esta compra/entrada? O <b>estoque será revertido</b>, o <b>financeiro estornado</b> e o <b>caixa devolvido</b> (na parte paga em dinheiro). O registro fica marcado como cancelado para auditoria.', () => {
+      const c = DB.get('compras', id); if (!c || c.cancelada) return;
+      // 1) reverte estoque das unidades que entraram
+      (c.itens || []).forEach(i => { if (i.produtoId) { const p = DB.get('produtos', i.produtoId); if (p) DB.update('produtos', i.produtoId, { qtd: Math.max(0, (p.qtd || 0) - (i.qtd || 0)) }); } });
+      // 2) estorna os lançamentos financeiros vinculados (mesma compra)
+      DB.all('financeiro').filter(f => f.refId === id && f.origem === 'compra').forEach(f => DB.remove('financeiro', f.id));
+      // 3) devolve ao caixa a parte paga em dinheiro (estorno = entrada compensatória; mantém o histórico)
+      DB.all('caixa').filter(m => m.refId === id && m.fluxo === 'saida').forEach(m => { if (typeof Caixa !== 'undefined') Caixa.add({ fluxo: 'entrada', tipo: 'Estorno de compra', origem: 'Estorno · Entrada de estoque #' + String(id).slice(-6).toUpperCase(), categoria: 'Estorno', valor: m.valor, forma: m.forma || 'Dinheiro', obs: 'Cancelamento da compra', refId: id }); });
+      DB.update('compras', id, { cancelada: true, canceladaEm: new Date().toISOString() });
+      DB.logMov('devolucao', 'Compra/entrada cancelada — estoque revertido, financeiro estornado' + (c.total ? ' (' + Fmt.brl(c.total) + ')' : ''), { valor: c.total || 0, refId: id });
+      Toast.ok('Compra cancelada e estornada.'); App.go('compras');
+    }, 'Cancelar compra');
   },
   compraItens: [],
   compraTogglePrazo() { const w = document.getElementById('c-venc-wrap'); if (w) w.style.display = fchk('c-prazo') ? 'block' : 'none'; },
@@ -4058,7 +4079,7 @@ const Caixa = {
     return DB.insert('caixa', {
       data: o.data || new Date().toISOString(), fluxo: o.fluxo, tipo: o.tipo,
       origem: o.origem || o.tipo, categoria: o.categoria || '', valor: Math.abs(o.valor) || 0,
-      obs: o.obs || '', comprovante: o.comprovante || '', responsavel: 'Admin', refId: o.refId || null
+      forma: o.forma || 'Dinheiro', obs: o.obs || '', comprovante: o.comprovante || '', responsavel: 'Admin', refId: o.refId || null
     });
   },
   saldo() { return DB.all('caixa').reduce((s, m) => s + (m.fluxo === 'entrada' ? m.valor : -m.valor), 0); },
@@ -4147,11 +4168,11 @@ Modules.cxRender = function () {
   if (filtro === 'hoje') { const t = new Date(); list = list.filter(m => new Date(m.data).toDateString() === t.toDateString()); }
   else if (filtro === 'entrada' || filtro === 'saida') list = list.filter(m => m.fluxo === filtro);
   document.getElementById('cx-hist').innerHTML = `<div class="table-wrap"><table>
-    <thead><tr><th>Data/Hora</th><th>Tipo</th><th>Origem</th><th>Categoria</th><th>Obs.</th><th>Resp.</th><th class="num">Valor</th></tr></thead>
+    <thead><tr><th>Data/Hora</th><th>Tipo</th><th>Origem</th><th>Forma</th><th>Obs.</th><th>Resp.</th><th class="num">Valor</th></tr></thead>
     <tbody>${list.map(m => `<tr>
       <td>${Fmt.datetime(m.data)}</td>
       <td><span class="badge ${m.fluxo === 'entrada' ? 'b-green' : 'b-red'}">${m.fluxo === 'entrada' ? '⬆️' : '⬇️'} ${esc(m.tipo)}</span></td>
-      <td>${esc(m.origem)}</td><td>${esc(m.categoria || '—')}</td>
+      <td>${esc(m.origem)}</td><td>${esc(m.forma || 'Dinheiro')}</td>
       <td class="muted">${esc(m.obs || '—')}${m.comprovante ? ' 📎' : ''}</td><td>${esc(m.responsavel)}</td>
       <td class="num strong" style="color:${m.fluxo === 'entrada' ? 'var(--green)' : 'var(--red)'}">${m.fluxo === 'entrada' ? '+' : '−'} ${Fmt.brl(m.valor)}</td>
     </tr>`).join('') || '<tr><td colspan="7" class="muted" style="text-align:center;padding:30px">Sem movimentações.</td></tr>'}</tbody></table></div>`;
@@ -4321,6 +4342,7 @@ const Cupom = {
       garantiaAviso: 'Guarde este comprovante. Necessário para atendimento em garantia.',
       garantiaPolitica: 'Não cobrimos danos por mau uso, quedas, líquidos, violação de lacre ou modificações no produto.',
       txtSeminovo: 'Produto seminovo revisado e testado antes da venda.',
+      assinaturaTexto: 'Declaro que recebi e conferi o(s) produto(s) em perfeito estado de funcionamento e estou ciente e de acordo com os termos de garantia acima.',
       regras: [
         { categoria: 'Consoles', condicao: 'novo', prazo: 12, unidade: 'meses' },
         { categoria: 'Consoles', condicao: 'seminovo', prazo: 90, unidade: 'dias' },
@@ -4330,7 +4352,7 @@ const Cupom = {
         { categoria: 'Acessórios', condicao: '', prazo: 30, unidade: 'dias' },
         { categoria: 'Jogos', condicao: '', prazo: 0, unidade: 'dias' }
       ],
-      campos: { telefone: true, whatsapp: true, instagram: false, endereco: false, cnpj: false, numeroVenda: true, operador: true, pagamento: true, parcelamento: true, desconto: true, garantia: true, serie: true, observacoes: true, rodape: true, qrcode: false },
+      campos: { telefone: true, whatsapp: true, instagram: false, endereco: false, cnpj: false, numeroVenda: true, operador: true, pagamento: true, parcelamento: true, desconto: true, garantia: true, serie: true, observacoes: true, rodape: true, qrcode: false, assinatura: false },
       modelo: 'padrao'
     };
   },
@@ -4347,9 +4369,9 @@ const Cupom = {
   setCampo(k, v) { const cur = this.get(); this.set({ campos: Object.assign({}, cur.campos, { [k]: v }) }); },
   applyModelo(m) {
     const presets = {
-      economico: { telefone: false, whatsapp: false, instagram: false, endereco: false, cnpj: false, numeroVenda: true, operador: false, pagamento: true, parcelamento: true, desconto: true, garantia: true, serie: false, observacoes: false, rodape: true, qrcode: false },
-      padrao: { telefone: true, whatsapp: true, instagram: false, endereco: false, cnpj: false, numeroVenda: true, operador: true, pagamento: true, parcelamento: true, desconto: true, garantia: true, serie: true, observacoes: false, rodape: true, qrcode: false },
-      detalhado: { telefone: true, whatsapp: true, instagram: true, endereco: true, cnpj: true, numeroVenda: true, operador: true, pagamento: true, parcelamento: true, desconto: true, garantia: true, serie: true, observacoes: true, rodape: true, qrcode: true }
+      economico: { telefone: false, whatsapp: false, instagram: false, endereco: false, cnpj: false, numeroVenda: true, operador: false, pagamento: true, parcelamento: true, desconto: true, garantia: true, serie: false, observacoes: false, rodape: true, qrcode: false, assinatura: false },
+      padrao: { telefone: true, whatsapp: true, instagram: false, endereco: false, cnpj: false, numeroVenda: true, operador: true, pagamento: true, parcelamento: true, desconto: true, garantia: true, serie: true, observacoes: false, rodape: true, qrcode: false, assinatura: false },
+      detalhado: { telefone: true, whatsapp: true, instagram: true, endereco: true, cnpj: true, numeroVenda: true, operador: true, pagamento: true, parcelamento: true, desconto: true, garantia: true, serie: true, observacoes: true, rodape: true, qrcode: true, assinatura: true }
     };
     this.set({ modelo: m, campos: presets[m] || presets.padrao });
   },
@@ -4390,7 +4412,7 @@ Modules.cfgCupomArea = function () {
         </div>
       </div>
 
-      <div class="card" style="margin-bottom:16px"><div class="section-title">🛡️ Garantia padrão da loja</div>
+      <div class="card" style="margin-bottom:16px"><div class="section-title">🛡️ Garantia padrão da loja <a onclick="Modules.cfgTermoSugerido()">📄 Usar termo sugerido</a></div>
         <div class="form-grid">
           <div class="field"><label>Garantia ativa por padrão</label><label style="display:inline-flex;align-items:center;gap:8px;padding-top:8px;font-size:13px;color:var(--txt-2)"><input type="checkbox" ${c.garantiaAtiva ? 'checked' : ''} onchange="Cupom.set({garantiaAtiva:this.checked});Modules.cfgPreview()"> Ativada</label></div>
           <div class="field"><label>Prazo padrão</label><div style="display:flex;gap:8px"><input type="number" value="${c.garantiaPrazo}" style="${inS}" onchange="Cupom.set({garantiaPrazo:parseInt(this.value)||0});Modules.cfgPreview()"><select style="${inS};width:auto" onchange="Cupom.set({garantiaUnidade:this.value});Modules.cfgPreview()"><option ${c.garantiaUnidade === 'dias' ? 'selected' : ''}>dias</option><option ${c.garantiaUnidade === 'meses' ? 'selected' : ''}>meses</option></select></div></div>
@@ -4398,7 +4420,9 @@ Modules.cfgCupomArea = function () {
           <div class="field full"><label>Aviso para guardar o cupom</label><input value="${esc(c.garantiaAviso)}" onchange="Cupom.set({garantiaAviso:this.value});Modules.cfgPreview()"></div>
           <div class="field full"><label>Política resumida de garantia</label><textarea onchange="Cupom.set({garantiaPolitica:this.value});Modules.cfgPreview()">${esc(c.garantiaPolitica)}</textarea></div>
           <div class="field full"><label>Texto para seminovos/usados</label><input value="${esc(c.txtSeminovo)}" onchange="Cupom.set({txtSeminovo:this.value});Modules.cfgPreview()"></div>
+          <div class="field full"><label>Declaração de assinatura do cliente <span class="muted">(aparece acima da linha de assinatura)</span></label><textarea onchange="Cupom.set({assinaturaTexto:this.value});Modules.cfgPreview()">${esc(c.assinaturaTexto || '')}</textarea></div>
         </div>
+        <p class="muted" style="font-size:12px;margin-top:6px">Para mostrar o espaço de assinatura no cupom, ative <b>“Assinatura do cliente”</b> em “Campos exibidos no cupom”.</p>
       </div>
 
       <div class="card" style="margin-bottom:16px"><div class="section-title">📋 Garantia por categoria / condição <a onclick="Modules.cfgRegraAdd()">+ Nova regra</a></div>
@@ -4423,7 +4447,7 @@ Modules.cfgCupomArea = function () {
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px">
           ${sw('telefone', 'Telefone')}${sw('whatsapp', 'WhatsApp')}${sw('instagram', 'Instagram')}${sw('endereco', 'Endereço')}${sw('cnpj', 'CNPJ')}
           ${sw('numeroVenda', 'Número da venda')}${sw('operador', 'Operador')}${sw('pagamento', 'Forma de pagamento')}${sw('parcelamento', 'Parcelamento')}${sw('desconto', 'Desconto')}
-          ${sw('garantia', 'Garantia')}${sw('serie', 'Número de série')}${sw('observacoes', 'Observações')}${sw('rodape', 'Mensagem de rodapé')}${sw('qrcode', 'Código da venda')}
+          ${sw('garantia', 'Garantia')}${sw('serie', 'Número de série')}${sw('observacoes', 'Observações')}${sw('rodape', 'Mensagem de rodapé')}${sw('qrcode', 'Código da venda')}${sw('assinatura', '✍️ Assinatura do cliente')}
         </div>
       </div>
 
@@ -4460,6 +4484,19 @@ Modules.cfgPreview = function () {
   const mm = this.cfgPrevPapel === '58' ? 58 : 80, px = Math.round(mm * 3.78);
   const html = Print.receiptHtml(sample, { papel: this.cfgPrevPapel, noPrint: true });
   box.innerHTML = `<iframe style="width:${px}px;min-height:560px;border:none;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.15)" srcdoc="${esc(html)}"></iframe>`;
+};
+Modules.cfgTermoSugerido = function () {
+  Modal.confirm('Preencher os textos de garantia e a declaração de assinatura com um modelo pronto? Você poderá editar tudo depois.', () => {
+    Cupom.set({
+      garantiaTexto: 'Garantia de {prazo} a partir da data desta compra, mediante apresentação deste comprovante.',
+      garantiaAviso: 'Guarde este comprovante — ele é obrigatório para atendimento em garantia.',
+      garantiaPolitica: 'A garantia cobre defeitos de fabricacao e de funcionamento do produto. NAO cobre: mau uso, quedas, contato com liquidos, oxidacao, violacao de lacre, reparos por terceiros, desgaste natural, danos esteticos, senhas/contas e acessorios de consumo. Produto com lacre violado perde a garantia.',
+      txtSeminovo: 'Produtos seminovos e usados sao testados e revisados antes da venda. Possuem garantia legal de 90 dias para vicios ocultos (art. 26, CDC).',
+      assinaturaTexto: 'Declaro que recebi e conferi o(s) produto(s) em perfeito estado de funcionamento e estou ciente e de acordo com os termos de garantia acima.',
+      campos: Object.assign({}, Cupom.get().campos, { garantia: true, assinatura: true })
+    });
+    Toast.ok('Termo de garantia e assinatura preenchidos.'); App.go('config');
+  }, 'Preencher');
 };
 Modules.cfgRegraSet = function (i, f, v) { const c = Cupom.get(); const regras = c.regras.slice(); regras[i] = Object.assign({}, regras[i], { [f]: f === 'prazo' ? (parseInt(v) || 0) : v }); Cupom.set({ regras }); this.cfgPreview(); };
 Modules.cfgRegraAdd = function () { const c = Cupom.get(); const regras = c.regras.slice(); regras.push({ categoria: (DB.all('categorias')[0] || {}).nome || 'Consoles', condicao: '', prazo: 30, unidade: 'dias' }); Cupom.set({ regras }); App.go('config'); };
@@ -6268,7 +6305,7 @@ Modules.biCompras = function () {
   const r = BI.range(S.periodo, S.de, S.ate);
   const custom = S.periodo === 'custom' ? `<span style="display:inline-flex;gap:6px;align-items:center"><input type="date" id="cpg-de" value="${S.de}" onchange="Modules.cpgState.de=this.value;Modules.biRender()"><span class="muted">até</span><input type="date" id="cpg-ate" value="${S.ate}" onchange="Modules.cpgState.ate=this.value;Modules.biRender()"></span>` : '';
   const bar = `<div class="bi-periodbar"><select id="cpg-per" onchange="Modules.cpgSet(this.value)">${periodOptsHtml(S.periodo)}</select> ${custom}<div class="bi-pb-label">📅 <b>${esc(BI.periodoLabel(S.periodo, r))}</b></div></div>`;
-  const compras = DB.all('compras').filter(c => { const d = new Date(c.data); return d >= r.start && d <= r.end; });
+  const compras = DB.all('compras').filter(c => !c.cancelada && (() => { const d = new Date(c.data); return d >= r.start && d <= r.end; })());
   if (!compras.length) return bar + '<div class="empty-state"><div class="big">🚚</div>Nenhuma compra registrada no período.</div>';
   const porForma = {}, porOrigem = {}; let total = 0;
   compras.forEach(c => {
