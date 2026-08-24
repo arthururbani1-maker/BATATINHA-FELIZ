@@ -595,6 +595,23 @@ td .muted,.muted{color:var(--txt-3)}
 .mp-best-p{font-size:15px;font-weight:700;margin:4px 0 2px}
 .mp-best-v{font-size:12.5px;color:var(--txt-2)}
 
+/* ===== Usuários & permissões ===== */
+.usr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.usr-card{background:var(--bg-2);border:1px solid var(--border);border-radius:12px;padding:13px}
+.usr-h{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.usr-av{width:40px;height:40px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex:none}
+.usr-nome{font-weight:700;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.usr-sub{font-size:12px;color:var(--txt-3)}
+.usr-meta{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.usr-perm{font-size:12.5px;color:var(--txt-2);margin-bottom:10px}
+.usr-acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.usr-tog{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--txt-2);cursor:pointer}
+.usr-grp{margin-bottom:14px}
+.usr-grp-t{font-size:12.5px;font-weight:700;color:var(--txt);border-bottom:1px solid var(--border);padding-bottom:5px;margin-bottom:8px}
+.usr-sws{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:7px}
+.usr-sw{display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--border);border-radius:9px;cursor:pointer;font-size:13px}
+.usr-sw input{flex:none}
+
 </style>
   <script>
     /* Aplica o tema o quanto antes para evitar "flash" ao carregar */
@@ -665,7 +682,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 6.1 · compra em dinheiro no caixa</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 6.2 · permissões por usuário</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -1736,7 +1753,7 @@ const Modules = {
       if (st === 'baixo' && p.qtd > p.min) return false;
       return true;
     });
-    const canEd = App.can('podeEditarProduto'), canFin = App.canFinance();
+    const canEd = App.can('podeEditarProduto'), canDel = App.can('podeExcluirProduto'), canFin = App.canFinance();
     const rows = list.map(p => {
       const disp = Modules.disp(p), res = p.reservado || 0;
       const dot = disp > 0 ? '🟢' : (res > 0 ? '🟡' : '🔴');
@@ -1752,11 +1769,11 @@ const Modules = {
         <td class="num strong">${Fmt.brl(p.preco)}</td>
         ${canFin ? `<td class="num"><span class="badge b-green">${Fmt.pct((p.preco - (p.custoMedio || p.custo)) / p.preco * 100)}</span></td>` : ''}
         <td>${p.local || '-'}</td>
-        ${canEd ? `<td class="num"><button class="btn-icon" onclick="Modules.produtoForm('${p.id}')">✏️</button> <button class="btn-icon" onclick="Modules.delProduto('${p.id}')">🗑️</button></td>` : ''}
+        ${(canEd || canDel) ? `<td class="num">${canEd ? `<button class="btn-icon" onclick="Modules.produtoForm('${p.id}')">✏️</button> ` : ''}${canDel ? `<button class="btn-icon" onclick="Modules.delProduto('${p.id}')">🗑️</button>` : ''}</td>` : ''}
       </tr>`;
     }).join('');
     document.getElementById('est-table').innerHTML = `<div class="table-wrap"><table>
-      <thead><tr><th>Produto</th><th>Categoria</th><th>Condição</th><th class="num">Estoque total</th><th class="num">Disponível</th><th class="num">Reservado</th>${canFin ? '<th class="num">Custo méd.</th>' : ''}<th class="num">Preço</th>${canFin ? '<th class="num">Margem</th>' : ''}<th>Local</th>${canEd ? '<th></th>' : ''}</tr></thead>
+      <thead><tr><th>Produto</th><th>Categoria</th><th>Condição</th><th class="num">Estoque total</th><th class="num">Disponível</th><th class="num">Reservado</th>${canFin ? '<th class="num">Custo méd.</th>' : ''}<th class="num">Preço</th>${canFin ? '<th class="num">Margem</th>' : ''}<th>Local</th>${(canEd || canDel) ? '<th></th>' : ''}</tr></thead>
       <tbody>${rows || '<tr><td colspan="12" class="muted" style="text-align:center;padding:30px">Nenhum produto encontrado.</td></tr>'}</tbody></table></div>
       <div class="muted" style="font-size:12px;margin-top:8px">🟢 Disponível · 🟡 Reservado (pré-venda) · 🔴 Sem disponível. Disponível = Estoque total − Reservado.</div>`;
   },
@@ -1786,6 +1803,7 @@ const Modules = {
     });
   },
   saveProduto(id) {
+    if (!App.can('podeEditarProduto')) return Toast.err('Você não tem permissão para cadastrar/editar produtos.');
     const nome = fval('p-nome'), sku = fval('p-sku');
     if (!nome || !sku) return Toast.err('Informe nome e SKU.');
     const custo = moneyBR(fval('p-custo'));
@@ -1824,7 +1842,8 @@ const Modules = {
     Modal.close(); App.go('estoque');
   },
   delProduto(id) {
-    Modal.confirm('Excluir este produto do estoque?', () => { DB.remove('produtos', id); Toast.ok('Produto removido.'); App.go('estoque'); }, 'Excluir');
+    if (!App.can('podeExcluirProduto')) return Toast.err('Você não tem permissão para excluir produtos.');
+    Modal.confirm('Excluir este produto do estoque?', () => { if (!App.can('podeExcluirProduto')) return; DB.remove('produtos', id); Toast.ok('Produto removido.'); App.go('estoque'); }, 'Excluir');
   },
   ajusteEstoque() {
     const prods = DB.all('produtos');
@@ -4987,48 +5006,64 @@ Modules.cfgResetData = function () {
   }, 'Resetar agora');
 };
 
+Modules.PERM_GROUPS = [
+  { t: 'Dashboard', mods: [['dashboard', 'Visualizar Dashboard']], flags: [] },
+  { t: 'PDV & Vendas', mods: [['pdv', 'Acessar PDV'], ['vendasDia', 'Ver Vendas do Dia'], ['caixa', 'Acessar Caixa']], flags: [['podeDesconto', 'Dar desconto no PDV'], ['podeAlterarPreco', 'Alterar preço na venda'], ['podeCancelar', 'Cancelar venda'], ['podeSangria', 'Sangria / retirada do caixa']] },
+  { t: 'Estoque & Compras', mods: [['estoque', 'Acessar estoque'], ['entrada', 'Entrada de estoque'], ['compras', 'Acessar compras'], ['usados', 'Receber usado'], ['trocas', 'Trocas']], flags: [['podeEditarProduto', 'Cadastrar / editar produto'], ['podeExcluirProduto', 'Excluir produto']] },
+  { t: 'Financeiro', mods: [['financeiro', 'Acessar Financeiro']], flags: [] },
+  { t: 'Relatórios', mods: [['relatorios', 'Acessar Relatórios']], flags: [['verFinanceiro', 'Ver custo, lucro e margem']] },
+  { t: 'Outros módulos', mods: [['prevendas', 'Pré-venda / Reservas'], ['movimentacoes', 'Movimentações'], ['garantias', 'Garantias']], flags: [] },
+  { t: 'Configurações', mods: [['config', 'Acessar Configurações']], flags: [] }
+];
+Modules.permCount = function (u) { const p = u.permissoes || {}; let n = 0; this.PERM_GROUPS.forEach(g => { g.mods.forEach(m => { if (p.modules && p.modules[m[0]]) n++; }); g.flags.forEach(f => { if (p[f[0]]) n++; }); }); return n; };
 Modules.cfgUsuariosCard = function () {
+  if (!App.isAdmin()) return '<div class="card"><div class="empty-state"><div class="big">🔒</div>Apenas administradores podem gerenciar usuários e permissões.</div></div>';
   const us = DB.all('usuarios');
   return `<div class="card" style="margin-top:18px">
     <div class="section-title">👤 Usuários <a onclick="Modules.cfgUserAdd()">+ Novo usuário</a></div>
-    <div class="table-wrap" style="border:none"><table><thead><tr><th>Nome</th><th>Usuário (login)</th><th>Perfil</th><th>Status</th><th></th></tr></thead>
-    <tbody>${us.map(u => `<tr>
-      <td class="strong">${esc(u.nome)}</td><td>${esc(u.usuario)}</td>
-      <td>${u.role === 'admin' ? '<span class="badge b-purple">Dono / Admin</span>' : '<span class="badge b-blue">Funcionário</span>'}</td>
-      <td><label style="display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-size:12.5px;color:var(--txt-2)"><input type="checkbox" ${u.ativo !== false ? 'checked' : ''} onchange="Modules.cfgUserToggle('${u.id}',this.checked)"> ${u.ativo !== false ? 'Ativo' : 'Inativo'}</label></td>
-      <td class="num"><button class="btn-ghost btn-sm" onclick="Modules.cfgUserPass('${u.id}')">🔑 Senha</button> ${u.id !== 'u_admin' ? `<button class="btn-icon" onclick="Modules.cfgUserDel('${u.id}')">🗑️</button>` : ''}</td>
-    </tr>`).join('')}</tbody></table></div>
-    <p class="muted" style="margin-top:10px;font-size:12px">O funcionário entra com o login dele e vê apenas o que estiver liberado abaixo.</p>
+    <div class="usr-grid">${us.map(u => { const admin = u.role === 'admin', ativo = u.ativo !== false; return `<div class="usr-card">
+      <div class="usr-h"><div class="usr-av">${esc((u.nome || '?').charAt(0).toUpperCase())}</div><div style="flex:1;min-width:0"><div class="usr-nome">${esc(u.nome)}</div><div class="usr-sub">${esc(u.usuario)}</div></div></div>
+      <div class="usr-meta"><span class="badge ${admin ? 'b-purple' : 'b-blue'}">${admin ? 'Dono / Admin' : 'Funcionário'}</span><span class="badge ${ativo ? 'b-green' : 'b-gray'}">${ativo ? '● Ativo' : '○ Inativo'}</span></div>
+      <div class="usr-perm">${admin ? '🔓 Acesso total ao sistema' : (this.permCount(u) + ' permissões ativas')}</div>
+      <div class="usr-acts">
+        ${admin ? '<button class="btn-ghost btn-sm" disabled>Acesso total</button>' : `<button class="btn-primary btn-sm" onclick="Modules.cfgUserPerms('${u.id}')">Gerenciar permissões</button>`}
+        <button class="btn-ghost btn-sm" onclick="Modules.cfgUserPass('${u.id}')" title="Trocar senha">🔑</button>
+        <label class="usr-tog"><input type="checkbox" ${ativo ? 'checked' : ''} ${u.id === 'u_admin' ? 'disabled' : ''} onchange="Modules.cfgUserToggle('${u.id}',this.checked)"> ativo</label>
+        ${(u.id !== 'u_admin' && !admin) ? `<button class="btn-icon" title="Remover" onclick="Modules.cfgUserDel('${u.id}')">🗑️</button>` : ''}
+      </div></div>`; }).join('')}</div>
+    <p class="muted" style="margin-top:12px;font-size:12px">Cada usuário tem as <b>próprias</b> permissões — alterar um <b>não afeta</b> os outros. O administrador tem acesso total e não pode ser rebaixado por engano.</p>
   </div>`;
+};
+Modules.cfgUserPerms = function (id) {
+  if (!App.isAdmin()) return Toast.err('Apenas administradores podem alterar permissões.');
+  const u = DB.get('usuarios', id); if (!u) return;
+  if (u.role === 'admin') return Toast.err('O administrador já tem acesso total.');
+  const p = Object.assign({}, PERM_DEFAULT_FUNC, u.permissoes || {}, { modules: Object.assign({}, PERM_DEFAULT_FUNC.modules, (u.permissoes || {}).modules || {}) });
+  const sw = (isMod, key, lbl) => { const val = isMod ? !!(p.modules && p.modules[key]) : !!p[key]; return `<label class="usr-sw"><input type="checkbox" ${val ? 'checked' : ''} onchange="Modules.cfgUserPermSet('${id}','${key}',this.checked,${isMod})"> <span>${esc(lbl)}</span></label>`; };
+  const body = this.PERM_GROUPS.map(g => `<div class="usr-grp"><div class="usr-grp-t">${esc(g.t)}</div><div class="usr-sws">${g.mods.map(m => sw(true, m[0], m[1])).join('')}${g.flags.map(f => sw(false, f[0], f[1])).join('')}</div></div>`).join('');
+  Modal.open({ title: '🔒 Permissões de ' + esc(u.nome), wide: true, body: `<p class="muted" style="margin-bottom:12px;font-size:12.5px">Ative só o que <b>${esc(u.nome)}</b> pode acessar e fazer. Salva na hora, <b>somente para este usuário</b>. Vale no próximo login dele (ou já, se estiver logado).</p>${body}`, foot: `<button class="btn-primary" onclick="Modal.close();App.go('config')">Concluir</button>` });
+};
+Modules.cfgUserPermSet = function (id, key, value, isModule) {
+  if (!App.isAdmin()) return Toast.err('Apenas administradores podem alterar permissões.');
+  const u = DB.get('usuarios', id); if (!u || u.role === 'admin') return;
+  const perm = Object.assign({ modules: {} }, u.permissoes || {});
+  perm.modules = Object.assign({}, (u.permissoes || {}).modules || {});
+  if (isModule) perm.modules[key] = value; else perm[key] = value;
+  DB.update('usuarios', id, { permissoes: perm });   // salva SÓ neste usuário
+  const cur = App.user(); if (cur && cur.id === id) App.applyAccess();   // se for o próprio logado, reflete na hora
+  Toast.ok('Permissões atualizadas com sucesso.');
 };
 Modules.cfgPermissoesCard = function () {
-  const cfg = DB.all('config')[0] || {};
-  const pf = Object.assign({}, PERM_DEFAULT_FUNC, cfg.permFuncionario || {}, { modules: Object.assign({}, PERM_DEFAULT_FUNC.modules, (cfg.permFuncionario || {}).modules || {}) });
-  const mods = [['pdv', 'PDV — Venda'], ['caixa', 'Caixa da Loja'], ['estoque', 'Estoque'], ['entrada', 'Entrada de Estoque'], ['vendasDia', 'Vendas do Dia'], ['dashboard', 'Dashboard'], ['compras', 'Compras'], ['usados', 'Receber Usado'], ['trocas', 'Trocas'], ['prevendas', 'Pré-venda / Reservas'], ['movimentacoes', 'Movimentações'], ['garantias', 'Garantias'], ['financeiro', 'Financeiro'], ['relatorios', 'Relatórios'], ['config', 'Configurações']];
-  const flags = [['verFinanceiro', 'Ver custo, lucro e margem'], ['podeCancelar', 'Cancelar vendas'], ['podeDesconto', 'Dar desconto no PDV'], ['podeAlterarPreco', 'Alterar preço no PDV'], ['podeEditarProduto', 'Editar / excluir produtos'], ['podeSangria', 'Sangria / retirada do caixa']];
-  const chk = (k, v, isMod) => `<label style="display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;cursor:pointer;font-size:13px"><input type="checkbox" ${v ? 'checked' : ''} onchange="Modules.cfgPermSet('${k}',this.checked,${isMod})"> ${k}</label>`;
+  if (!App.isAdmin()) return '<div class="card"><div class="empty-state"><div class="big">🔒</div>Apenas administradores.</div></div>';
+  const us = DB.all('usuarios').filter(u => u.role !== 'admin');
   return `<div class="card" style="margin-top:18px">
-    <div class="section-title">🔒 Permissões do Funcionário</div>
-    <p class="muted" style="margin-bottom:12px">Marque o que o perfil <b>Funcionário</b> pode acessar e fazer. As mudanças valem no próximo login dele.</p>
-    <div style="font-size:12.5px;font-weight:700;color:var(--txt-2);margin-bottom:8px">Áreas visíveis no menu</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:18px">
-      ${mods.map(m => `<label style="display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;cursor:pointer;font-size:13px"><input type="checkbox" ${pf.modules[m[0]] ? 'checked' : ''} onchange="Modules.cfgPermSet('${m[0]}',this.checked,true)"> ${m[1]}</label>`).join('')}
-    </div>
-    <div style="font-size:12.5px;font-weight:700;color:var(--txt-2);margin-bottom:8px">Permissões e dados sensíveis</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px">
-      ${flags.map(f => `<label style="display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--line);border-radius:9px;cursor:pointer;font-size:13px"><input type="checkbox" ${pf[f[0]] ? 'checked' : ''} onchange="Modules.cfgPermSet('${f[0]}',this.checked,false)"> ${f[1]}</label>`).join('')}
-    </div>
-  </div>`;
-};
-Modules.cfgPermSet = function (key, value, isModule) {
-  const cfg = DB.all('config')[0];
-  const pf = Object.assign({ modules: {} }, cfg.permFuncionario || {});
-  pf.modules = Object.assign({}, (cfg.permFuncionario || {}).modules || {});
-  if (isModule) pf.modules[key] = value; else pf[key] = value;
-  DB.update('config', cfg.id, { permFuncionario: pf });
-  Toast.ok('Permissão atualizada.');
+    <div class="section-title">🔒 Permissões</div>
+    <p class="muted" style="line-height:1.7;margin-bottom:12px">As permissões agora são <b>individuais por usuário</b> — cada um tem o próprio conjunto, e alterar um <b>não afeta</b> os outros. Gerencie no card de cada usuário.</p>
+    ${us.length ? `<div class="usr-grid">${us.map(u => `<div class="usr-card"><div class="usr-h"><div class="usr-av">${esc((u.nome || '?').charAt(0).toUpperCase())}</div><div style="flex:1;min-width:0"><div class="usr-nome">${esc(u.nome)}</div><div class="usr-sub">${this.permCount(u)} permissões ativas</div></div></div><div class="usr-acts"><button class="btn-primary btn-sm" onclick="Modules.cfgUserPerms('${u.id}')">Gerenciar permissões</button></div></div>`).join('')}</div>` : '<p class="muted" style="font-size:12.5px">Nenhum funcionário cadastrado. Crie usuários na aba 👤 Usuários.</p>'}
+    <button class="btn-ghost" style="margin-top:12px" onclick="Modules.cfgSetTab('usuarios')">Ir para Usuários</button></div>`;
 };
 Modules.cfgUserAdd = function () {
+  if (!App.isAdmin()) return Toast.err('Apenas administradores podem criar usuários.');
   Modal.open({
     title: '+ Novo usuário',
     body: `<div class="form-grid">
@@ -5041,10 +5076,13 @@ Modules.cfgUserAdd = function () {
   });
 };
 Modules.cfgUserSaveNew = function () {
-  const nome = fval('us-nome'), usuario = fval('us-user'), senha = fval('us-pass');
+  if (!App.isAdmin()) return Toast.err('Apenas administradores podem criar usuários.');
+  const nome = fval('us-nome'), usuario = fval('us-user'), senha = fval('us-pass'), role = fval('us-role');
   if (!nome || !usuario || !senha) return Toast.err('Preencha nome, usuário e senha.');
   if (DB.all('usuarios').some(u => u.usuario.toLowerCase() === usuario.toLowerCase())) return Toast.err('Já existe um usuário com esse login.');
-  DB.insert('usuarios', { nome, usuario, senha, role: fval('us-role'), ativo: true });
+  // novo funcionário nasce com um conjunto PRÓPRIO de permissões (independente dos demais)
+  const permissoes = role === 'admin' ? null : JSON.parse(JSON.stringify(PERM_DEFAULT_FUNC));
+  DB.insert('usuarios', { nome, usuario, senha, role, ativo: true, permissoes });
   Modal.close(); Toast.ok('Usuário criado.'); App.go('config');
 };
 Modules.cfgUserPass = function (id) {
@@ -5060,10 +5098,13 @@ Modules.cfgUserSavePass = function (id) {
   DB.update('usuarios', id, { senha: s }); Modal.close(); Toast.ok('Senha atualizada.');
 };
 Modules.cfgUserToggle = function (id, ativo) {
+  if (!App.isAdmin()) return Toast.err('Apenas administradores.');
   if (id === 'u_admin' && !ativo) return Toast.err('Não é possível desativar o administrador principal.');
   DB.update('usuarios', id, { ativo }); Toast.ok('Status atualizado.');
 };
 Modules.cfgUserDel = function (id) {
+  if (!App.isAdmin()) return Toast.err('Apenas administradores podem remover usuários.');
+  const u = DB.get('usuarios', id); if (u && u.role === 'admin' && DB.all('usuarios').filter(x => x.role === 'admin').length <= 1) return Toast.err('Não é possível remover o único administrador.');
   Modal.confirm('Remover este usuário?', () => { DB.remove('usuarios', id); App.go('config'); Toast.ok('Usuário removido.'); }, 'Remover');
 };
 Modules.cfgSet = function (id, field, value) {
@@ -7219,7 +7260,7 @@ const Theme = {
 /* ============ RICO GAMES ERP — Permissões ============ */
 const PERM_DEFAULT_FUNC = {
   modules: { dashboard: false, vendasDia: true, pdv: true, caixa: true, estoque: true, entrada: false, compras: false, usados: false, trocas: false, prevendas: true, movimentacoes: false, garantias: false, financeiro: false, relatorios: false, config: false },
-  verFinanceiro: false, podeCancelar: false, podeDesconto: true, podeEditarProduto: true, podeSangria: true, podeAlterarPreco: false
+  verFinanceiro: false, podeCancelar: false, podeDesconto: true, podeEditarProduto: true, podeExcluirProduto: false, podeSangria: true, podeAlterarPreco: false
 };
 
 /* ============ RICO GAMES ERP — App / Router ============ */
@@ -7245,6 +7286,7 @@ const App = {
       });
     }
     DB.load();
+    this.migratePerms();
     Theme.init();
     this.renderAuth();
     if (typeof Cloud !== 'undefined' && Cloud.configured()) {
@@ -7309,9 +7351,9 @@ const App = {
     const p = document.getElementById('su-pass').value, p2 = document.getElementById('su-pass2').value;
     if (!nome || !user || !p) return Toast.err('Preencha nome, usuário e senha.');
     if (p !== p2) return Toast.err('As senhas não conferem.');
-    DB.insert('usuarios', { nome, usuario: user, senha: p, role: 'admin', ativo: true });
+    const rec = DB.insert('usuarios', { nome, usuario: user, senha: p, role: 'admin', ativo: true });
     sessionStorage.setItem('rg_logged', '1');
-    sessionStorage.setItem('rg_user', JSON.stringify({ usuario: user, nome, role: 'admin' }));
+    sessionStorage.setItem('rg_user', JSON.stringify({ id: rec.id, usuario: user, nome, role: 'admin' }));
     Toast.ok('Administrador criado. Bem-vindo!');
     this.showApp();
   },
@@ -7321,17 +7363,35 @@ const App = {
     const found = DB.all('usuarios').find(x => x.usuario.toLowerCase() === u.toLowerCase() && x.senha === p && x.ativo !== false);
     if (found) {
       sessionStorage.setItem('rg_logged', '1');
-      sessionStorage.setItem('rg_user', JSON.stringify({ usuario: found.usuario, nome: found.nome, role: found.role }));
+      sessionStorage.setItem('rg_user', JSON.stringify({ id: found.id, usuario: found.usuario, nome: found.nome, role: found.role }));
       this.showApp();
     } else Toast.err('Usuário ou senha incorretos.');
   },
   /* ---- Permissões ---- */
   user() { try { return JSON.parse(sessionStorage.getItem('rg_user')); } catch (e) { return null; } },
-  isAdmin() { const u = this.user(); return !u || u.role === 'admin'; },
+  // registro completo do usuário logado (fonte das permissões individuais)
+  userRec() { const u = this.user(); if (!u) return null; return DB.all('usuarios').find(x => (u.id && x.id === u.id) || (x.usuario || '').toLowerCase() === (u.usuario || '').toLowerCase()) || null; },
+  isAdmin() { const u = this.user(); if (!u) return true; const rec = this.userRec(); return (rec ? rec.role : u.role) === 'admin'; },
   perms() {
     if (this.isAdmin()) return null;
-    const cfg = DB.all('config')[0] || {}, pf = cfg.permFuncionario || {};
-    return Object.assign({}, PERM_DEFAULT_FUNC, pf, { modules: Object.assign({}, PERM_DEFAULT_FUNC.modules, pf.modules || {}) });
+    const rec = this.userRec();
+    const pp = (rec && rec.permissoes) ? rec.permissoes : {};   // permissões DESTE usuário (individuais)
+    return Object.assign({}, PERM_DEFAULT_FUNC, pp, { modules: Object.assign({}, PERM_DEFAULT_FUNC.modules, pp.modules || {}) });
+  },
+  // Migração segura: dá a cada funcionário seu próprio conjunto de permissões, preservando o que já tinham.
+  migratePerms() {
+    const cfg = DB.all('config')[0]; if (!cfg) return;
+    if (cfg.permUserMigrated) return;
+    const legacy = cfg.permFuncionario || null;   // conjunto antigo, compartilhado
+    DB.all('usuarios').forEach(u => {
+      if (u.role === 'admin') return;
+      if (!u.permissoes) {
+        const base = legacy ? JSON.parse(JSON.stringify(legacy)) : JSON.parse(JSON.stringify(PERM_DEFAULT_FUNC));
+        base.modules = Object.assign({}, PERM_DEFAULT_FUNC.modules, base.modules || {});
+        DB.update('usuarios', u.id, { permissoes: base });
+      }
+    });
+    DB.update('config', cfg.id, { permUserMigrated: true });
   },
   canModule(route) { if (this.isAdmin()) return true; const p = this.perms(); return !!(p.modules && p.modules[route]); },
   canFinance() { if (this.isAdmin()) return true; return !!this.perms().verFinanceiro; },
