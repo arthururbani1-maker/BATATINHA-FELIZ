@@ -682,7 +682,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 6.4 · cupom mostra só o valor cobrado</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 6.5 · relatório Compras × Vendas</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -5895,7 +5895,7 @@ function periodOptsHtml(sel) { return [['all', 'Todo o período'], ['hoje', 'Hoj
 
 Modules.biState = { tab: 'geral', trend: 'dia', sel: [], periodo: '30d', de: '', ate: '' };
 Modules.relatorios = function () {
-  const tabs = [['geral', '📊 Visão geral'], ['analiseprod', '🔎 Análise de produto'], ['comparaprod', '⚖️ Análise de produtos'], ['simulador', '🧮 Simulador'], ['segmentos', '🧩 Segmentos'], ['pagamentos', '💳 Formas de pagamento'], ['compraspg', '🚚 Compras'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['rentab', '💎 Rentabilidade']];
+  const tabs = [['geral', '📊 Visão geral'], ['analiseprod', '🔎 Análise de produto'], ['comparaprod', '⚖️ Análise de produtos'], ['giro', '🔁 Compras × Vendas'], ['simulador', '🧮 Simulador'], ['segmentos', '🧩 Segmentos'], ['pagamentos', '💳 Formas de pagamento'], ['compraspg', '🚚 Compras'], ['rankings', '🏆 Rankings'], ['pesquisa', '🔍 Pesquisa & comparação'], ['rentab', '💎 Rentabilidade']];
   const st = this.biState, r = BI.range(st.periodo, st.de, st.ate);
   setTimeout(() => Modules.biRender(), 20);
   return `
@@ -5945,7 +5945,7 @@ Modules.biRangeCtx = function () {
 Modules.biInit = function () { this.biRender(); };
 Modules.biSetTab = function (t) {
   this.biState.tab = t;
-  const keys = ['geral', 'analiseprod', 'comparaprod', 'simulador', 'segmentos', 'pagamentos', 'compraspg', 'rankings', 'pesquisa', 'rentab'];
+  const keys = ['geral', 'analiseprod', 'comparaprod', 'giro', 'simulador', 'segmentos', 'pagamentos', 'compraspg', 'rankings', 'pesquisa', 'rentab'];
   document.querySelectorAll('#bi-subnav .tab').forEach((el, i) => el.classList.toggle('active', keys[i] === t));
   this.biRender();
 };
@@ -5953,7 +5953,7 @@ Modules.biRender = function () {
   const b = document.getElementById('bi-body'); if (!b) return;
   const t = this.biState.tab;
   try {
-    b.innerHTML = ({ geral: this.biGeral, analiseprod: this.biAnaliseProd, comparaprod: this.biMultiProd, simulador: this.biSimulador, segmentos: this.biSegmentos, pagamentos: this.biPagamentos, compraspg: this.biCompras, rankings: this.biRankings, pesquisa: this.biPesquisa, rentab: this.biRentab })[t].call(this);
+    b.innerHTML = ({ geral: this.biGeral, analiseprod: this.biAnaliseProd, comparaprod: this.biMultiProd, giro: this.biGiro, simulador: this.biSimulador, segmentos: this.biSegmentos, pagamentos: this.biPagamentos, compraspg: this.biCompras, rankings: this.biRankings, pesquisa: this.biPesquisa, rentab: this.biRentab })[t].call(this);
     if (t === 'pesquisa') this.biCompara();
     if (t === 'simulador') this.simRecalc();
   } catch (e) {
@@ -6464,6 +6464,102 @@ Modules.biCompras = function () {
     + `<div class="card"><div class="section-title">Por origem do pagamento</div>
       <div class="table-wrap"><table><thead><tr><th>Origem</th><th class="num">Total</th></tr></thead>
       <tbody>${origens.map(x => `<tr><td>${esc(x.o)}</td><td class="num strong">${Fmt.brl(x.v)}</td></tr>`).join('')}</tbody></table></div></div>`;
+};
+
+/* ===== Compras × Vendas (Giro do que comprei) =====
+   Para cada produto COMPRADO no período: quanto comprei e quanto DESSE lote já vendi
+   (unidades, custo, receita e lucro estimados). "Vendido do lote" conta todas as vendas
+   até hoje, limitado à quantidade comprada no período (giro nunca passa de 100%).
+   Só leitura — não altera preços, estoque, financeiro nem histórico. */
+Modules.giroState = { periodo: 'mes', de: '', ate: '', sort: 'inv' };
+Modules.giroSet = function (v) { this.giroState.periodo = v; this.biRender(); };
+Modules.giroSortSet = function (v) { this.giroState.sort = v; this.biRender(); };
+Modules.giroCompute = function (r) {
+  // 1) compras do período agregadas por SKU
+  const compras = DB.all('compras').filter(c => !c.cancelada && (() => { const d = new Date(c.data); return d >= r.start && d <= r.end; })());
+  const buy = {};
+  compras.forEach(c => (c.itens || []).forEach(i => {
+    const sku = i.sku || i.produtoId; if (!sku) return;
+    const b = buy[sku] || (buy[sku] = { sku, nome: i.nome || (BI.prodInfo(i.sku) || {}).nome || sku, qtdC: 0, custoC: 0 });
+    const q = +i.qtd || 0; b.qtdC += q; b.custoC += (+i.custo || 0) * q;
+  }));
+  // 2) vendas de TODOS os tempos por SKU (não canceladas)
+  const sold = {};
+  DB.all('vendas').filter(v => !v.cancelada).forEach(v => (v.itens || []).forEach(i => {
+    const sku = i.sku; if (!sku || !buy[sku]) return;
+    const s = sold[sku] || (sold[sku] = { qtd: 0, receita: 0 });
+    const q = +i.qtd || 0; s.qtd += q; s.receita += (+i.preco || 0) * q;
+  }));
+  // 3) cruzamento por SKU
+  const rows = Object.values(buy).map(b => {
+    const s = sold[b.sku] || { qtd: 0, receita: 0 };
+    const custoUnit = b.qtdC ? b.custoC / b.qtdC : 0;
+    const precoMedioV = s.qtd ? s.receita / s.qtd : 0;
+    const vendLote = Math.min(s.qtd, b.qtdC);          // do lote comprado no período
+    const custoVend = vendLote * custoUnit;
+    const receitaEst = vendLote * precoMedioV;
+    const lucroEst = receitaEst - custoVend;
+    const sobra = b.qtdC - vendLote;
+    return { sku: b.sku, nome: b.nome, qtdC: b.qtdC, custoC: b.custoC, custoUnit, vendLote, giro: b.qtdC ? vendLote / b.qtdC * 100 : 0, custoVend, receitaEst, lucroEst, sobra, sobraCusto: sobra * custoUnit };
+  });
+  const cmp = { inv: (a, b) => b.custoC - a.custoC, giroDesc: (a, b) => b.giro - a.giro || b.custoC - a.custoC, giroAsc: (a, b) => a.giro - b.giro || b.custoC - a.custoC, lucro: (a, b) => b.lucroEst - a.lucroEst };
+  rows.sort(cmp[this.giroState.sort] || cmp.inv);
+  const T = rows.reduce((t, x) => { t.qtdC += x.qtdC; t.custoC += x.custoC; t.vendLote += x.vendLote; t.custoVend += x.custoVend; t.receitaEst += x.receitaEst; t.lucroEst += x.lucroEst; t.sobra += x.sobra; t.sobraCusto += x.sobraCusto; return t; }, { qtdC: 0, custoC: 0, vendLote: 0, custoVend: 0, receitaEst: 0, lucroEst: 0, sobra: 0, sobraCusto: 0 });
+  T.giro = T.qtdC ? T.vendLote / T.qtdC * 100 : 0;
+  return { rows, T, nCompras: compras.length };
+};
+Modules.biGiro = function () {
+  const S = this.giroState, r = BI.range(S.periodo, S.de, S.ate);
+  const custom = S.periodo === 'custom' ? `<span style="display:inline-flex;gap:6px;align-items:center"><input type="date" id="giro-de" value="${S.de}" onchange="Modules.giroState.de=this.value;Modules.biRender()"><span class="muted">até</span><input type="date" id="giro-ate" value="${S.ate}" onchange="Modules.giroState.ate=this.value;Modules.biRender()"></span>` : '';
+  const bar = `<div class="bi-periodbar"><select id="giro-per" onchange="Modules.giroSet(this.value)">${periodOptsHtml(S.periodo)}</select> ${custom}<div class="bi-pb-label">📅 <b>${esc(BI.periodoLabel(S.periodo, r))}</b></div></div>`;
+  const D = this.giroCompute(r);
+  if (!D.rows.length) return bar + '<div class="empty-state"><div class="big">🔁</div>Nenhuma compra registrada no período.<div class="muted" style="margin-top:6px;font-size:12.5px">As compras aparecem aqui após serem lançadas em Entrada de Estoque ou Compras.</div></div>';
+  const T = D.T;
+  const kpi = (l, v, sub) => `<div class="ap-kpi"><span>${l}</span><b>${v}</b>${sub ? `<small style="display:block;color:var(--txt-3);font-weight:600;font-size:11px;margin-top:2px">${sub}</small>` : ''}</div>`;
+  const giroColor = g => g >= 70 ? '#22c55e' : (g >= 35 ? '#f59e0b' : '#ef4444');
+  const barPct = g => `<div style="display:flex;align-items:center;gap:7px;justify-content:flex-end"><div style="flex:1;max-width:90px;height:7px;border-radius:5px;background:var(--line);overflow:hidden"><div style="width:${Math.min(100, g).toFixed(0)}%;height:100%;background:${giroColor(g)}"></div></div><b style="min-width:42px;text-align:right;color:${giroColor(g)}">${Fmt.pct(g)}</b></div>`;
+  const sortSel = `<select id="giro-sort" onchange="Modules.giroSortSet(this.value)" style="margin-left:auto">
+    <option value="inv" ${S.sort === 'inv' ? 'selected' : ''}>Mais investido</option>
+    <option value="giroAsc" ${S.sort === 'giroAsc' ? 'selected' : ''}>Menor giro (empacado)</option>
+    <option value="giroDesc" ${S.sort === 'giroDesc' ? 'selected' : ''}>Maior giro</option>
+    <option value="lucro" ${S.sort === 'lucro' ? 'selected' : ''}>Maior lucro estimado</option></select>`;
+  const rowsHtml = D.rows.map(x => `<tr>
+    <td class="strong">${esc(x.nome)}<div class="muted" style="font-size:11px">${esc(x.sku)}</div></td>
+    <td class="num">${x.qtdC}</td>
+    <td class="num">${Fmt.brl(x.custoC)}</td>
+    <td class="num strong">${x.vendLote}${x.sobra > 0 ? `<div class="muted" style="font-size:11px">sobra ${x.sobra}</div>` : ''}</td>
+    <td class="num">${barPct(x.giro)}</td>
+    <td class="num">${Fmt.brl(x.receitaEst)}</td>
+    <td class="num" style="color:${x.lucroEst >= 0 ? '#16a34a' : '#ef4444'}"><b>${Fmt.brl(x.lucroEst)}</b></td>
+    <td class="num">${x.sobra > 0 ? Fmt.brl(x.sobraCusto) : '<span class="muted">—</span>'}</td></tr>`).join('');
+  return bar
+    + `<div class="ap-kpis" style="margin-bottom:6px">
+        ${kpi('Comprado no período', Fmt.brl(T.custoC), T.qtdC + ' un · ' + D.nCompras + ' compra(s)')}
+        ${kpi('Vendido do comprado', Fmt.pct(T.giro), T.vendLote + ' de ' + T.qtdC + ' un')}
+        ${kpi('Receita estimada', Fmt.brl(T.receitaEst), 'do que já girou')}
+        ${kpi('Lucro estimado', Fmt.brl(T.lucroEst), 'receita − custo do vendido')}
+        ${kpi('Ainda em estoque', Fmt.brl(T.sobraCusto), T.sobra + ' un a custo')}
+      </div>
+      <p class="muted" style="font-size:12px;margin:0 2px 14px">💡 "Vendido do lote" conta todas as vendas até hoje, no máximo o que foi comprado no período. Receita e lucro são estimados pelo preço médio de venda de cada produto.</p>
+      <div class="card"><div class="section-title" style="display:flex;align-items:center;gap:10px">Giro por produto ${sortSel}</div>
+      <div class="table-wrap"><table><thead><tr>
+        <th>Produto</th><th class="num">Comprado</th><th class="num">Investido</th><th class="num">Vendido</th><th class="num">% giro</th><th class="num">Receita estim.</th><th class="num">Lucro estim.</th><th class="num">Sobra (custo)</th>
+      </tr></thead>
+      <tbody>${rowsHtml}</tbody>
+      <tfoot><tr style="font-weight:700;border-top:2px solid var(--line)">
+        <td>Total (${D.rows.length} produtos)</td><td class="num">${T.qtdC}</td><td class="num">${Fmt.brl(T.custoC)}</td><td class="num">${T.vendLote}</td><td class="num">${Fmt.pct(T.giro)}</td><td class="num">${Fmt.brl(T.receitaEst)}</td><td class="num" style="color:${T.lucroEst >= 0 ? '#16a34a' : '#ef4444'}">${Fmt.brl(T.lucroEst)}</td><td class="num">${Fmt.brl(T.sobraCusto)}</td>
+      </tr></tfoot></table></div>
+      <div style="margin-top:12px"><button class="btn-ghost btn-sm" onclick="Modules.giroExport()">⬇️ Exportar CSV</button></div></div>`;
+};
+Modules.giroExport = function () {
+  const S = this.giroState, r = BI.range(S.periodo, S.de, S.ate), D = this.giroCompute(r);
+  const head = ['Produto', 'SKU', 'Comprado (un)', 'Investido', 'Vendido do lote (un)', '% giro', 'Custo do vendido', 'Receita estimada', 'Lucro estimado', 'Sobra (un)', 'Sobra (custo)'];
+  const lines = [head.join(';')];
+  D.rows.forEach(x => lines.push([`"${(x.nome || '').replace(/"/g, '""')}"`, x.sku, x.qtdC, x.custoC.toFixed(2), x.vendLote, x.giro.toFixed(1), x.custoVend.toFixed(2), x.receitaEst.toFixed(2), x.lucroEst.toFixed(2), x.sobra, x.sobraCusto.toFixed(2)].join(';')));
+  const T = D.T; lines.push(['TOTAL', '', T.qtdC, T.custoC.toFixed(2), T.vendLote, T.giro.toFixed(1), T.custoVend.toFixed(2), T.receitaEst.toFixed(2), T.lucroEst.toFixed(2), T.sobra, T.sobraCusto.toFixed(2)].join(';'));
+  const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'compras-x-vendas.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  if (typeof Toast !== 'undefined') Toast.ok('CSV exportado.');
 };
 
 </script>
