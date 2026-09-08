@@ -682,7 +682,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 6.5 · relatório Compras × Vendas</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 6.6 · histórico com auditoria de estoque</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -1928,6 +1928,14 @@ const Modules = {
         data.precoHist = ph;
         DB.logMov('ajuste', 'Preço alterado: ' + nome + ' (' + Fmt.brl(cur.preco || 0) + ' → ' + Fmt.brl(preco) + ')', { valor: 0 });
       }
+      // Alteração manual da quantidade na edição → registra AJUSTE auditável (aparece no histórico)
+      const qtdAntes = cur.qtd || 0, qtdDepois = data.qtd || 0, deltaQtd = qtdDepois - qtdAntes;
+      if (deltaQtd !== 0) {
+        const aj = (cur.ajustes || []).slice();
+        aj.unshift({ data: new Date().toISOString(), delta: deltaQtd, motivo: 'Alteração manual no cadastro', usuario: quem, de: qtdAntes, para: qtdDepois });
+        data.ajustes = aj;
+        DB.logMov('ajuste', 'Estoque alterado no cadastro: ' + nome + ' (' + qtdAntes + ' → ' + qtdDepois + ')', { valor: 0, refId: id });
+      }
       DB.update('produtos', id, data);
       Toast.ok(custoMudou ? 'Custo do produto atualizado com sucesso.' : 'Produto atualizado.');
     } else {
@@ -2926,347 +2934,484 @@ const Modules = {
 
 </script>
   <script>
-/* ============ RICO GAMES ERP — Histórico do Produto ============
-   Abre um modal completo com resumo + abas (Compras, Vendas, Linha do Tempo,
-   Evolução de custo/preço), filtros, busca e exportação Excel/PDF.
-   Informações de custo, taxas, lucro e margem aparecem só para administradores. */
+/* ============ RICO GAMES ERP — Histórico do Produto (Trilha de Auditoria) ============
+   Reconstrói TODAS as movimentações do produto (compras, entradas, usados recebidos em
+   pagamento, vendas/trocas e ajustes manuais) em ordem cronológica, com SALDO ANTES e
+   SALDO DEPOIS de cada movimentação. O estoque atual (p.qtd) é a fonte da verdade:
+   estoque inicial = qtd atual − soma de todas as movimentações registradas.
+
+   Deduplica a Entrada de Estoque, que grava tanto em `compras` quanto em `p.entradas`.
+   Custo, lucro e margem só aparecem para administradores (App.canFinance()). */
 const ProdHist = {
   curId: null,
-  tab: 'compras',
   cache: null,
-  f: { de: '', ate: '', tipo: '', busca: '' },
+  f: { preset: 'all', de: '', ate: '', cat: '' },
+  fisico: '',
 
   canFin() { return (typeof App === 'undefined') || App.canFinance(); },
-  vendas() { return (typeof Calc !== 'undefined' && Calc.vendasValidas) ? Calc.vendasValidas() : DB.all('vendas').filter(v => !v.cancelada); },
+  canAjustar() { return (typeof App === 'undefined') || App.can('podeEditarProduto'); },
+  vendasValidas() { return (typeof Calc !== 'undefined' && Calc.vendasValidas) ? Calc.vendasValidas() : DB.all('vendas').filter(v => !v.cancelada); },
+  quem() { return (typeof App !== 'undefined' && App.user() && App.user().nome) ? App.user().nome : 'Admin'; },
+  vNum(v) { return v && v.numero != null ? '#' + String(v.numero).padStart(5, '0') : '#' + String((v && v.id) || '').slice(-4).toUpperCase(); },
+  cNum(c) { return '#' + String((c && c.id) || '').slice(-4).toUpperCase(); },
+  dkey(d) { return new Date(d).toISOString().slice(0, 16); }, // até o minuto (p/ dedupe)
 
-  /* ---------- coleta / agregação por produto ---------- */
+  /* ---------- coleta e reconstrução das movimentações ---------- */
   collect(id) {
     const p = DB.get('produtos', id);
     if (!p) return null;
     const fmap = {}; DB.all('fornecedores').forEach(f => fmap[f.id] = f.nome);
     const match = (it) => it.produtoId === id || (it.sku && p.sku && it.sku === p.sku) || (it.nome && it.nome === p.nome);
+    const movs = [];
+    const compraKeys = new Set();
 
-    /* ----- ENTRADAS ----- */
-    const entradas = [];
-    DB.all('compras').forEach(c => (c.itens || []).forEach(it => { if (match(it)) {
-      const obs = [c.obs, it.condicao ? ('cond.: ' + it.condicao) : '', c.nf ? ('NF ' + c.nf) : ''].filter(Boolean).join(' · ');
-      entradas.push({ data: c.data, tipo: 'Compra de fornecedor', qtd: it.qtd, custoUnit: it.custo, custoTotal: it.qtd * it.custo, fornecedor: fmap[c.fornecedorId] || '—', origem: 'Compra #' + String(c.id).slice(-4), obs: obs, responsavel: c.responsavel || 'Admin', serie: '' });
-    }}));
-    this.vendas().forEach(v => (v.usados || []).forEach(u => { if (u.produtoId === id) {
-      entradas.push({ data: v.data, tipo: 'Produto usado recebido como pagamento', qtd: u.qtd || 1, custoUnit: (u.valorUnit != null ? u.valorUnit : u.valor), custoTotal: u.valor, fornecedor: 'Cliente', origem: 'Venda #' + String(v.id).slice(-4), obs: u.estado || '', responsavel: v.usuario || 'Admin', serie: u.serie || '' });
-    }}));
+    /* ENTRADAS por COMPRA / ENTRADA DE ESTOQUE (fonte canônica: coleção compras) */
+    DB.all('compras').filter(c => !c.cancelada).forEach(c => (c.itens || []).forEach(it => {
+      if (!match(it)) return;
+      const ehEnt = c.origem === 'entrada';
+      const q = +it.qtd || 0, cu = +it.custo || 0;
+      compraKeys.add(this.dkey(c.data) + '|' + q + '|' + Math.round(cu));
+      movs.push({
+        data: c.data, kind: 'in', cat: 'compra',
+        tipo: ehEnt ? 'Entrada de estoque' : 'Compra de fornecedor',
+        delta: q, qtd: q, custoUnit: cu, valorTotal: cu * q,
+        compraId: c.id, numero: this.cNum(c),
+        fornecedor: fmap[c.fornecedorId] || (ehEnt ? (c.origemPagamento || '') : '') || '—',
+        obs: [c.obs, c.nf ? ('NF ' + c.nf) : '', c.formaPagamento ? ('pgto: ' + c.formaPagamento) : ''].filter(Boolean).join(' · '),
+        responsavel: c.responsavel || 'Admin'
+      });
+    }));
+
+    /* ENTRADAS por PRODUTO RECEBIDO COMO PAGAMENTO (vendas.usados) */
+    this.vendasValidas().forEach(v => (v.usados || []).forEach(u => {
+      if (u.produtoId !== id) return;
+      const q = +u.qtd || 1, cu = (u.valorUnit != null ? +u.valorUnit : (+u.valor || 0) / q);
+      movs.push({
+        data: v.data, kind: 'in', cat: 'recebido',
+        tipo: 'Produto recebido em pagamento',
+        delta: q, qtd: q, custoUnit: cu, valorTotal: +u.valor || cu * q,
+        vendaId: v.id, numero: this.vNum(v),
+        fornecedor: 'Cliente', obs: u.estado ? ('estado: ' + u.estado) : (u.serie ? 'S/N ' + u.serie : ''),
+        responsavel: v.usuario || 'Admin'
+      });
+    }));
+
+    /* ENTRADAS de p.entradas que NÃO correspondem a uma compra (evita contagem dupla) */
     (p.entradas || []).forEach(e => {
-      entradas.push({ data: e.data, tipo: e.tipo || 'Entrada de estoque', qtd: e.qtd, custoUnit: e.custoUnit || 0, custoTotal: (e.custoUnit || 0) * (e.qtd || 0), fornecedor: e.fornecedor || '—', origem: e.origem || '', obs: e.obs || '', responsavel: e.responsavel || 'Admin', serie: e.serie || '' });
+      const q = +e.qtd || 0, cu = +e.custoUnit || 0;
+      const k = this.dkey(e.data) + '|' + q + '|' + Math.round(cu);
+      if (compraKeys.has(k)) return; // já contabilizada via coleção compras
+      movs.push({
+        data: e.data, kind: 'in', cat: 'entrada',
+        tipo: e.tipo || 'Entrada de estoque',
+        delta: q, qtd: q, custoUnit: cu, valorTotal: cu * q,
+        numero: '', fornecedor: e.fornecedor || '—', obs: e.obs || '', responsavel: e.responsavel || 'Admin'
+      });
     });
-    entradas.sort((a, b) => new Date(b.data) - new Date(a.data));
 
-    /* ----- SAÍDAS (vendas) ----- */
-    const saidas = [];
-    this.vendas().forEach(v => {
+    /* SAÍDAS por VENDA / TROCA */
+    this.vendasValidas().forEach(v => {
       const taxaV = v.taxaTotal != null ? v.taxaTotal : (typeof Taxas !== 'undefined' ? Taxas.feeVenda(v) : 0);
       const base = (v.itens || []).reduce((s, x) => s + x.preco * x.qtd, 0);
       const pagStr = (v.pagamentos || []).map(pp => pp.tipo + (pp.parcelas > 1 ? ' ' + pp.parcelas + 'x' : '')).join(', ');
-      (v.itens || []).forEach(it => { if (match(it)) {
-        const valor = it.preco * it.qtd, custo = (it.custo || 0) * it.qtd;
+      (v.itens || []).forEach(it => {
+        if (!match(it)) return;
+        const q = +it.qtd || 0, valor = it.preco * q, custo = (it.custo || 0) * q;
         const taxaItem = base > 0 ? taxaV * (valor / base) : 0;
-        const descUnit = (it.precoOriginal != null && it.precoOriginal > it.preco) ? (it.precoOriginal - it.preco) * it.qtd : 0;
-        saidas.push({ data: v.data, tipo: (v.usados && v.usados.length) ? 'Troca (venda c/ usado)' : 'Venda no PDV', qtd: it.qtd, valorUnit: it.preco, valorTotal: valor, desconto: descUnit, vendaNum: '#' + String(v.id).slice(-4), forma: pagStr, custo, lucroBruto: valor - custo, taxaItem, lucroLiq: valor - custo - taxaItem, responsavel: v.usuario || 'Admin', semCusto: !(it.custo > 0) });
-      }});
+        movs.push({
+          data: v.data, kind: 'out', cat: 'venda',
+          tipo: (v.usados && v.usados.length) ? 'Troca (venda c/ usado)' : 'Venda',
+          delta: -q, qtd: q, valorUnit: it.preco, valorTotal: valor,
+          custo, lucroBruto: valor - custo, taxaItem, lucroLiq: valor - custo - taxaItem, semCusto: !(it.custo > 0),
+          vendaId: v.id, numero: this.vNum(v), forma: pagStr, responsavel: v.usuario || 'Admin'
+        });
+      });
     });
-    saidas.sort((a, b) => new Date(b.data) - new Date(a.data));
 
-    const custoHist = (p.custoHist || []).slice();
-    const precoHist = (p.precoHist || []).slice();
-    const criadoEm = p.criadoEm || (entradas.length ? entradas[entradas.length - 1].data : (custoHist.length ? custoHist[custoHist.length - 1].data : null));
+    /* AJUSTES MANUAIS (auditoria) */
+    (p.ajustes || []).forEach(a => {
+      const d = +a.delta || 0;
+      movs.push({
+        data: a.data, kind: 'adj', cat: 'ajuste',
+        tipo: 'Ajuste manual de estoque',
+        delta: d, qtd: Math.abs(d), motivo: a.motivo || '', responsavel: a.usuario || 'Admin', numero: ''
+      });
+    });
 
-    /* ----- RESUMO ----- */
-    const qtdComprada = entradas.reduce((s, e) => s + (e.qtd || 0), 0);
-    const qtdVendida = saidas.reduce((s, e) => s + (e.qtd || 0), 0);
-    const receita = saidas.reduce((s, e) => s + e.valorTotal, 0);
-    const lucroTotal = saidas.reduce((s, e) => s + e.lucroLiq, 0);
-    const margem = receita > 0 ? (lucroTotal / receita * 100) : 0;
-    const ultEntrada = entradas.length ? entradas[0] : null;
-    const ultVenda = saidas.length ? saidas[0] : null;
+    /* ordena cronologicamente (mais antigo primeiro) e calcula saldo corrido */
+    movs.sort((x, y) => new Date(x.data) - new Date(y.data) || (x.kind === 'in' ? -1 : 1));
+    const somaDelta = movs.reduce((s, m) => s + m.delta, 0);
+    const estoqueInicial = p.qtd - somaDelta;
+    let saldo = estoqueInicial;
+    movs.forEach(m => { m.saldoAntes = saldo; saldo += m.delta; m.saldoApos = saldo; });
 
-    return { p, entradas, saidas, custoHist, precoHist, criadoEm, fmap,
-      sum: { qtdComprada, qtdVendida, receita, lucroTotal, margem,
-        custoMedio: p.custoMedio || p.custo || 0,
-        ultCustoCompra: ultEntrada ? ultEntrada.custoUnit : (p.custo || 0),
-        ultEntradaData: ultEntrada ? ultEntrada.data : null,
-        ultVendaData: ultVenda ? ultVenda.data : null } };
+    /* séries e resumo */
+    const totalEntradas = movs.reduce((s, m) => s + (m.delta > 0 ? m.delta : 0), 0);
+    const totalSaidas = movs.reduce((s, m) => s + (m.delta < 0 ? -m.delta : 0), 0);
+    const receita = movs.reduce((s, m) => s + (m.cat === 'venda' ? m.valorTotal : 0), 0);
+    const lucroTotal = movs.reduce((s, m) => s + (m.cat === 'venda' ? (m.lucroLiq || 0) : 0), 0);
+    const custoMedio = p.custoMedio || p.custo || 0;
+
+    /* pontos de custo (entradas + custoHist) */
+    const custoPts = [];
+    movs.forEach(m => { if (m.kind === 'in' && m.custoUnit > 0) custoPts.push({ t: m.data, val: m.custoUnit }); });
+    (p.custoHist || []).slice().reverse().forEach(h => custoPts.push({ t: h.data, val: h.para }));
+    custoPts.sort((a, b) => new Date(a.t) - new Date(b.t));
+    if (!custoPts.length && custoMedio > 0) custoPts.push({ t: p.criadoEm || new Date().toISOString(), val: custoMedio });
+
+    /* pontos de estoque (inicial + saldoApos de cada mov) */
+    const estoquePts = [];
+    if (movs.length) estoquePts.push({ t: movs[0].data, val: estoqueInicial });
+    else estoquePts.push({ t: p.criadoEm || new Date().toISOString(), val: p.qtd });
+    movs.forEach(m => estoquePts.push({ t: m.data, val: m.saldoApos }));
+
+    return {
+      p, movs, estoqueInicial, custoPts, estoquePts,
+      sum: {
+        estoqueAtual: p.qtd, custoMedio, preco: p.preco, valorEstoque: p.qtd * custoMedio,
+        totalEntradas, totalSaidas, receita, lucroTotal,
+        margem: receita > 0 ? lucroTotal / receita * 100 : 0
+      }
+    };
   },
 
-  /* ---------- abrir modal ---------- */
+  /* ---------- abrir ---------- */
   open(id) {
-    this.curId = id; this.tab = 'compras'; this.f = { de: '', ate: '', tipo: '', busca: '' };
+    this.curId = id; this.f = { preset: 'all', de: '', ate: '', cat: '' }; this.fisico = '';
     this.cache = this.collect(id);
     if (!this.cache) return Toast.err('Produto não encontrado.');
-    const p = this.cache.p;
+    this.injectCss();
     Modal.open({
-      title: '🔎 Histórico — ' + esc(p.nome), wide: true,
-      body: `<div id="ph-head">${this.headHtml()}</div>
-        <div class="ph-tabs" id="ph-tabs">${this.tabsHtml()}</div>
-        <div class="ph-filters" id="ph-filters">${this.filtersHtml()}</div>
-        <div id="ph-content">${this.contentHtml()}</div>`,
+      title: '📦 Histórico — ' + esc(this.cache.p.nome), wide: true,
+      body: `<div id="ph-root"></div>`,
       foot: `<button class="btn-ghost" onclick="Modal.close()">Fechar</button>
         <button class="btn-ghost" onclick="ProdHist.exportXlsx()">⬇️ Excel</button>
         <button class="btn-primary" onclick="ProdHist.exportPdf()">🧾 PDF</button>`
     });
-    this.injectCss();
+    this.render();
   },
+  refresh() { this.cache = this.collect(this.curId); this.render(); },
+  render() { const el = document.getElementById('ph-root'); if (el) el.innerHTML = this.bodyHtml(); },
 
-  headHtml() {
-    const s = this.cache.sum, p = this.cache.p, fin = this.canFin();
-    const cell = (l, v) => `<div class="ph-cell"><div class="ph-l">${l}</div><div class="ph-v">${v}</div></div>`;
-    let h = `<div class="ph-grid">`;
-    h += cell('Categoria', esc(p.categoria || '—'));
-    h += cell('Marca / Modelo', esc((p.marca || '—') + (p.modelo ? ' · ' + p.modelo : '')));
-    h += cell('Condição', condBadge(p.condicao));
-    h += cell('Estoque atual', `<b>${p.qtd}</b> un <span class="muted">(mín ${p.min})</span>`);
-    h += cell('Preço de venda', Fmt.brl(p.preco));
-    if (fin) h += cell('Custo médio atual', Fmt.brl(s.custoMedio));
-    if (fin) h += cell('Último custo de compra', Fmt.brl(s.ultCustoCompra));
-    h += cell('Qtd total comprada', s.qtdComprada + ' un');
-    h += cell('Qtd total vendida', s.qtdVendida + ' un');
-    h += cell('Última entrada', s.ultEntradaData ? Fmt.date(s.ultEntradaData) : '—');
-    h += cell('Última venda', s.ultVendaData ? Fmt.date(s.ultVendaData) : '—');
-    if (fin) h += cell('Lucro total gerado', `<b style="color:var(--green)">${Fmt.brl(s.lucroTotal)}</b>`);
-    if (fin) h += cell('Margem média', Fmt.pct(s.margem));
-    h += `</div>`;
-    if (p.serie) h += `<div class="muted" style="margin-top:6px;font-size:12px">Nº de série: <b>${esc(p.serie)}</b> — histórico individual desta unidade.</div>`;
-    return h;
+  /* ---------- filtro por período/tipo (só afeta a linha do tempo) ---------- */
+  rangeFromPreset() {
+    const now = new Date(); let start = null, end = null;
+    const p = this.f.preset;
+    const d0 = (dt) => { const x = new Date(dt); x.setHours(0, 0, 0, 0); return x; };
+    if (p === 'hoje') start = d0(now);
+    else if (p === '7d') { start = d0(now); start.setDate(start.getDate() - 6); }
+    else if (p === '30d') { start = d0(now); start.setDate(start.getDate() - 29); }
+    else if (p === 'mes') start = new Date(now.getFullYear(), now.getMonth(), 1);
+    else if (p === '6m') { start = d0(now); start.setMonth(start.getMonth() - 6); }
+    else if (p === 'ano') { start = d0(now); start.setFullYear(start.getFullYear() - 1); }
+    else if (p === 'custom') { start = this.f.de ? new Date(this.f.de + 'T00:00:00') : null; end = this.f.ate ? new Date(this.f.ate + 'T23:59:59') : null; }
+    return { start, end };
   },
-
-  tabsHtml() {
-    const tabs = [['compras', '📥 Compras / Entradas'], ['vendas', '📤 Vendas / Saídas'], ['timeline', '🕑 Linha do Tempo'], ['evolucao', '📈 Evolução de Custo e Preço']];
-    return tabs.map(t => `<button class="ph-tab ${this.tab === t[0] ? 'on' : ''}" onclick="ProdHist.setTab('${t[0]}')">${t[1]}</button>`).join('');
-  },
-
-  filtersHtml() {
-    if (this.tab === 'evolucao') return '';
-    let tipos = [];
-    if (this.tab === 'compras') tipos = ['Compra de fornecedor', 'Produto usado recebido como pagamento', 'Entrada de estoque', 'Ajuste de estoque'];
-    else if (this.tab === 'vendas') tipos = ['Venda no PDV', 'Troca (venda c/ usado)'];
-    else tipos = ['Cadastro', 'Entrada', 'Venda', 'Alteração de custo', 'Alteração de preço'];
-    return `<div class="ph-fbar">
-      <label>De <input type="date" id="ph-de" value="${this.f.de}" onchange="ProdHist.applyFilters()"></label>
-      <label>Até <input type="date" id="ph-ate" value="${this.f.ate}" onchange="ProdHist.applyFilters()"></label>
-      <select id="ph-tipo" onchange="ProdHist.applyFilters()"><option value="">Todos os tipos</option>${tipos.map(t => `<option ${this.f.tipo === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
-      <input type="text" id="ph-busca" placeholder="Buscar..." value="${esc(this.f.busca)}" oninput="ProdHist.applyFilters()" class="grow">
-    </div>`;
-  },
-
-  setTab(t) { this.tab = t; this.f.tipo = '';
-    const ft = document.getElementById('ph-filters'); if (ft) ft.innerHTML = this.filtersHtml();
-    const tb = document.getElementById('ph-tabs'); if (tb) tb.innerHTML = this.tabsHtml();
-    this.renderContent();
-  },
-  applyFilters() {
-    this.f.de = fval('ph-de'); this.f.ate = fval('ph-ate'); this.f.tipo = fval('ph-tipo'); this.f.busca = fval('ph-busca');
-    this.renderContent();
-  },
-  renderContent() { const el = document.getElementById('ph-content'); if (el) el.innerHTML = this.contentHtml(); },
-
-  filtered(rows) {
-    const de = this.f.de ? new Date(this.f.de + 'T00:00:00') : null;
-    const ate = this.f.ate ? new Date(this.f.ate + 'T23:59:59') : null;
-    const tipo = this.f.tipo, q = (this.f.busca || '').toLowerCase();
-    return rows.filter(r => {
-      const d = new Date(r.data);
-      if (de && d < de) return false;
-      if (ate && d > ate) return false;
-      if (tipo && r.tipo !== tipo) return false;
-      if (q) { const hay = [r.tipo, r.fornecedor, r.origem, r.obs, r.forma, r.vendaNum, r.responsavel, r.serie].filter(Boolean).join(' ').toLowerCase(); if (!hay.includes(q)) return false; }
+  filteredMovs() {
+    const r = this.rangeFromPreset(), cat = this.f.cat;
+    return this.cache.movs.filter(m => {
+      const d = new Date(m.data);
+      if (r.start && d < r.start) return false;
+      if (r.end && d > r.end) return false;
+      if (cat === 'in' && m.kind !== 'in') return false;
+      if (cat === 'out' && m.kind !== 'out') return false;
+      if (cat === 'adj' && m.kind !== 'adj') return false;
+      if (cat === 'venda' && m.cat !== 'venda') return false;
+      if (cat === 'compra' && m.cat !== 'compra') return false;
+      if (cat === 'recebido' && m.cat !== 'recebido') return false;
       return true;
     });
   },
+  setPreset(v) { this.f.preset = v; this.render(); },
+  setCat(v) { this.f.cat = v; this.render(); },
+  setCustom() { this.f.de = fval('ph-de'); this.f.ate = fval('ph-ate'); this.f.preset = 'custom'; this.render(); },
 
-  contentHtml() {
-    if (this.tab === 'compras') return this.comprasHtml();
-    if (this.tab === 'vendas') return this.vendasHtml();
-    if (this.tab === 'timeline') return this.timelineHtml();
-    return this.evolucaoHtml();
+  /* ---------- conferência física / ajuste ---------- */
+  confInput(v) {
+    this.fisico = v;
+    const box = document.getElementById('ph-conf-res'); if (box) box.innerHTML = this.confResHtml();
+  },
+  confResHtml() {
+    const sis = this.cache.p.qtd;
+    const raw = (this.fisico || '').trim();
+    if (raw === '') return '<div class="ph-conf-hint">Digite a contagem física para comparar com o sistema.</div>';
+    const fis = parseInt(raw, 10);
+    if (isNaN(fis)) return '<div class="ph-conf-hint">Valor inválido.</div>';
+    const diff = fis - sis;
+    if (diff === 0) return `<div class="ph-conf-ok">✓ Estoque conferido — sistema e físico batem (${sis} un).</div>`;
+    const canAdj = this.canAjustar();
+    return `<div class="ph-conf-warn">⚠ Divergência: sistema <b>${sis}</b> · físico <b>${fis}</b> · diferença <b>${diff > 0 ? '+' : ''}${diff}</b></div>
+      ${canAdj
+        ? `<div class="ph-adj"><input type="text" id="ph-adj-motivo" placeholder="Motivo do ajuste (ex: contagem, perda, avaria)"><button class="btn-primary btn-sm" onclick="ProdHist.aplicarAjusteConf(${diff})">Ajustar estoque para ${fis} un</button></div>`
+        : `<div class="ph-conf-hint">Você não tem permissão para ajustar o estoque. Peça a um administrador.</div>`}`;
+  },
+  aplicarAjusteConf(delta) {
+    const motivo = (fval('ph-adj-motivo') || '').trim() || 'Ajuste por conferência de estoque';
+    this.aplicarAjuste(delta, motivo);
+  },
+  aplicarAjuste(delta, motivo) {
+    if (!this.canAjustar()) return Toast.err('Você não tem permissão para ajustar o estoque.');
+    delta = parseInt(delta, 10); if (!delta) return Toast.err('Ajuste inválido.');
+    const p = DB.get('produtos', this.curId); if (!p) return;
+    const novo = p.qtd + delta;
+    if (novo < 0) return Toast.err('O ajuste deixaria o estoque negativo.');
+    const aj = (p.ajustes || []).slice();
+    aj.unshift({ data: new Date().toISOString(), delta, motivo, usuario: this.quem(), de: p.qtd, para: novo });
+    DB.update('produtos', this.curId, { qtd: novo, ajustes: aj });
+    if (typeof DB.logMov === 'function') DB.logMov('ajuste', 'Ajuste de estoque: ' + p.nome + ' (' + p.qtd + ' → ' + novo + ') · ' + motivo, { valor: 0, refId: p.id });
+    Toast.ok('Estoque ajustado para ' + novo + ' un e registrado na auditoria.');
+    this.fisico = ''; this.refresh();
   },
 
-  comprasHtml() {
+  /* ---------- abrir venda / compra vinculada ---------- */
+  abrirVenda(id) { if (typeof Modules !== 'undefined' && Modules.vdDetail) { Modules.vdDetail(id); } },
+  abrirCompra(id) {
+    const c = DB.get('compras', id); if (!c) return;
     const fin = this.canFin();
-    const rows = this.filtered(this.cache.entradas);
-    if (!rows.length) return this.empty('Nenhuma entrada registrada para este produto.');
-    const body = rows.map(e => `<tr>
-      <td>${Fmt.datetime(e.data)}</td>
-      <td>${esc(e.tipo)}</td>
-      <td class="num">${e.qtd}</td>
-      ${fin ? `<td class="num">${Fmt.brl(e.custoUnit)}</td><td class="num">${Fmt.brl(e.custoTotal)}</td>` : ''}
-      <td>${esc(e.fornecedor || '—')}</td>
-      <td>${esc(e.origem || '—')}</td>
-      <td class="muted">${esc(e.obs || '') || (e.serie ? 'S/N ' + esc(e.serie) : '—')}</td>
-      <td>${esc(e.responsavel || '—')}</td></tr>`).join('');
-    const totQ = rows.reduce((s, e) => s + e.qtd, 0), totV = rows.reduce((s, e) => s + e.custoTotal, 0);
-    return `<div class="table-wrap"><table><thead><tr>
-      <th>Data/Hora</th><th>Tipo de entrada</th><th class="num">Qtd</th>${fin ? '<th class="num">Custo unit.</th><th class="num">Custo total</th>' : ''}<th>Fornecedor</th><th>Origem</th><th>Observação</th><th>Responsável</th></tr></thead>
-      <tbody>${body}</tbody>
-      <tfoot><tr><td class="strong">TOTAIS</td><td></td><td class="num strong">${totQ}</td>${fin ? `<td></td><td class="num strong">${Fmt.brl(totV)}</td>` : ''}<td colspan="4"></td></tr></tfoot></table></div>`;
+    const its = (c.itens || []).map(it => `<tr><td>${esc(it.nome || it.sku || '—')}</td><td class="num">${it.qtd}</td>${fin ? `<td class="num">${Fmt.brl(it.custo)}</td><td class="num">${Fmt.brl((it.custo || 0) * (it.qtd || 0))}</td>` : ''}</tr>`).join('');
+    const pags = (c.pagamentos || []).map(pp => `${esc(pp.forma)} — ${Fmt.brl(pp.valor)}${pp.parcelas > 1 ? ' (' + pp.parcelas + 'x)' : ''}`).join('<br>') || esc(c.formaPagamento || '—');
+    Modal.open({
+      title: '🚚 ' + (c.origem === 'entrada' ? 'Entrada de estoque ' : 'Compra ') + this.cNum(c), wide: true,
+      body: `<div class="ph-grid" style="margin-bottom:12px">
+          <div class="ph-cell"><div class="ph-l">Data</div><div class="ph-v">${Fmt.datetime(c.data)}</div></div>
+          <div class="ph-cell"><div class="ph-l">Responsável</div><div class="ph-v">${esc(c.responsavel || '—')}</div></div>
+          ${fin ? `<div class="ph-cell"><div class="ph-l">Total</div><div class="ph-v">${Fmt.brl(c.total || 0)}</div></div>` : ''}
+          <div class="ph-cell"><div class="ph-l">Pagamento</div><div class="ph-v" style="font-size:12px">${pags}</div></div>
+        </div>
+        <div class="table-wrap"><table><thead><tr><th>Produto</th><th class="num">Qtd</th>${fin ? '<th class="num">Custo unit.</th><th class="num">Custo total</th>' : ''}</tr></thead><tbody>${its}</tbody></table></div>
+        ${c.obs ? `<p class="muted" style="margin-top:8px">Obs.: ${esc(c.obs)}</p>` : ''}`,
+      foot: `<button class="btn-ghost" onclick="ProdHist.open('${this.curId}')">← Voltar ao histórico</button><button class="btn-primary" onclick="Modal.close()">Fechar</button>`
+    });
   },
 
-  vendasHtml() {
-    const fin = this.canFin();
-    const rows = this.filtered(this.cache.saidas);
-    if (!rows.length) return this.empty('Nenhuma venda registrada para este produto.');
-    const body = rows.map(e => `<tr>
-      <td>${Fmt.datetime(e.data)}</td>
-      <td>${esc(e.tipo)}</td>
-      <td class="num">${e.qtd}</td>
-      <td class="num">${Fmt.brl(e.valorUnit)}</td>
-      <td class="num">${Fmt.brl(e.valorTotal)}</td>
-      <td class="num muted">${e.desconto ? '- ' + Fmt.brl(e.desconto) : '—'}</td>
-      <td>${esc(e.vendaNum)}</td>
-      <td>${esc(e.forma || '—')}</td>
-      ${fin ? `<td class="num">${e.semCusto ? '<span title="Custo não informado">⚠️</span> ' : ''}${Fmt.brl(e.lucroBruto)}</td><td class="num">${Fmt.brl(e.taxaItem)}</td><td class="num" style="color:${e.lucroLiq >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${Fmt.brl(e.lucroLiq)}</td>` : ''}
-      <td>${esc(e.responsavel || '—')}</td></tr>`).join('');
-    const totQ = rows.reduce((s, e) => s + e.qtd, 0), totVal = rows.reduce((s, e) => s + e.valorTotal, 0), totLiq = rows.reduce((s, e) => s + e.lucroLiq, 0), totTax = rows.reduce((s, e) => s + e.taxaItem, 0);
-    return `<div class="table-wrap"><table><thead><tr>
-      <th>Data/Hora</th><th>Tipo de saída</th><th class="num">Qtd</th><th class="num">Valor unit.</th><th class="num">Valor total</th><th class="num">Desconto</th><th>Nº venda</th><th>Pagamento</th>${fin ? '<th class="num">Lucro bruto</th><th class="num">Taxas</th><th class="num">Lucro líquido</th>' : ''}<th>Responsável</th></tr></thead>
-      <tbody>${body}</tbody>
-      <tfoot><tr><td class="strong">TOTAIS</td><td></td><td class="num strong">${totQ}</td><td></td><td class="num strong">${Fmt.brl(totVal)}</td><td colspan="3"></td>${fin ? `<td></td><td class="num strong">${Fmt.brl(totTax)}</td><td class="num strong" style="color:${totLiq >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(totLiq)}</td>` : ''}<td></td></tr></tfoot></table></div>`;
+  /* ---------- HTML principal ---------- */
+  bodyHtml() {
+    return this.resumoHtml() + this.saldoHtml() + this.conferenciaHtml() + this.graficosHtml() + this.timelineHtml();
   },
 
-  timelineRows() {
-    const fin = this.canFin(); const ev = [];
-    if (this.cache.criadoEm) ev.push({ data: this.cache.criadoEm, tipo: 'Cadastro', ico: '🆕', txt: 'Produto cadastrado no estoque' });
-    this.cache.entradas.forEach(e => ev.push({ data: e.data, tipo: 'Entrada', ico: '📥', txt: e.tipo + ' · ' + e.qtd + ' un' + (fin ? ' · ' + Fmt.brl(e.custoTotal) : '') + (e.fornecedor && e.fornecedor !== '—' ? ' · ' + e.fornecedor : '') + (e.serie ? ' · S/N ' + e.serie : '') }));
-    this.cache.saidas.forEach(e => ev.push({ data: e.data, tipo: 'Venda', ico: '🛒', txt: e.tipo + ' · ' + e.qtd + ' un · ' + Fmt.brl(e.valorTotal) + ' · venda ' + e.vendaNum + (fin ? ' · lucro líq. ' + Fmt.brl(e.lucroLiq) : '') }));
-    if (fin) this.cache.custoHist.forEach(h => ev.push({ data: h.data, tipo: 'Alteração de custo', ico: '⚖️', txt: 'Custo ' + Fmt.brl(h.de) + ' → ' + Fmt.brl(h.para) + ' · ' + (h.usuario || 'Admin') }));
-    this.cache.precoHist.forEach(h => ev.push({ data: h.data, tipo: 'Alteração de preço', ico: '🏷️', txt: 'Preço ' + Fmt.brl(h.de) + ' → ' + Fmt.brl(h.para) + ' · ' + (h.usuario || 'Admin') }));
-    ev.sort((a, b) => new Date(b.data) - new Date(a.data));
-    return ev;
-  },
-  timelineHtml() {
-    const rows = this.filtered(this.timelineRows());
-    if (!rows.length) return this.empty('Sem movimentações no período.');
-    return `<div class="ph-timeline">${rows.map(e => `<div class="ph-tl-item">
-      <div class="ph-tl-ico">${e.ico}</div>
-      <div class="ph-tl-body"><div class="ph-tl-top"><b>${esc(e.tipo)}</b><span class="muted">${Fmt.datetime(e.data)}</span></div>
-      <div class="ph-tl-txt">${esc(e.txt)}</div></div></div>`).join('')}</div>`;
+  resumoHtml() {
+    const s = this.cache.sum, p = this.cache.p, fin = this.canFin();
+    const card = (l, v, cls) => `<div class="ph-kpi ${cls || ''}"><span>${l}</span><b>${v}</b></div>`;
+    return `<div class="ph-section-t">Resumo</div>
+      <div class="ph-kpis">
+        ${card('Estoque atual', `${s.estoqueAtual} un`, 'hl')}
+        ${fin ? card('Custo médio atual', Fmt.brl(s.custoMedio)) : ''}
+        ${card('Preço de venda', Fmt.brl(s.preco))}
+        ${fin ? card('Valor em estoque', Fmt.brl(s.valorEstoque)) : ''}
+        ${card('Total de entradas', `${s.totalEntradas} un`, 'in')}
+        ${card('Total de saídas', `${s.totalSaidas} un`, 'out')}
+        ${fin ? card('Lucro gerado', Fmt.brl(s.lucroTotal), s.lucroTotal >= 0 ? 'in' : 'out') : ''}
+        ${fin ? card('Margem média', Fmt.pct(s.margem)) : ''}
+      </div>`;
   },
 
-  /* ---------- séries de custo e preço ---------- */
-  series() {
-    const fin = this.canFin();
-    const custoPts = [];
-    this.cache.entradas.slice().reverse().forEach(e => { if (e.custoUnit > 0) custoPts.push({ t: e.data, val: e.custoUnit }); });
-    this.cache.custoHist.slice().reverse().forEach(h => custoPts.push({ t: h.data, val: h.para }));
-    custoPts.push({ t: new Date().toISOString(), val: this.cache.sum.custoMedio });
-    const precoPts = [];
-    if (this.cache.criadoEm) precoPts.push({ t: this.cache.criadoEm, val: this.cache.p.preco });
-    this.cache.precoHist.slice().reverse().forEach(h => precoPts.push({ t: h.data, val: h.para }));
-    precoPts.push({ t: new Date().toISOString(), val: this.cache.p.preco });
-    const dedup = a => { const m = {}; a.forEach(p => m[p.t] = p); return Object.values(m).sort((x, y) => new Date(x.t) - new Date(y.t)); };
-    const out = [{ name: 'Preço de venda', color: '#5b8cff', points: dedup(precoPts) }];
-    if (fin) out.unshift({ name: 'Custo', color: '#f59e0b', points: dedup(custoPts) });
-    return out;
+  saldoHtml() {
+    const c = this.cache, s = c.sum;
+    const chip = (l, v, cls) => `<div class="ph-bal-chip ${cls || ''}"><div class="ph-bal-l">${l}</div><div class="ph-bal-v">${v}</div></div>`;
+    return `<div class="ph-balance">
+      ${chip('Estoque inicial', c.estoqueInicial + ' un')}
+      <div class="ph-bal-op">+</div>
+      ${chip('Entradas', s.totalEntradas + ' un', 'in')}
+      <div class="ph-bal-op">−</div>
+      ${chip('Saídas', s.totalSaidas + ' un', 'out')}
+      <div class="ph-bal-op">=</div>
+      ${chip('Estoque atual', s.estoqueAtual + ' un', 'eq')}
+    </div>`;
   },
-  evolucaoHtml() {
-    const series = this.series().filter(s => s.points.length);
-    const chart = this.lineChart(series);
-    let legend = `<div class="ph-legend">${series.map(s => `<span><i style="background:${s.color}"></i>${s.name}</span>`).join('')}</div>`;
-    let extra = '';
-    if (this.canFin()) {
-      const s = this.cache.sum;
-      extra = `<div class="ph-grid" style="margin-top:14px">
-        <div class="ph-cell"><div class="ph-l">Custo médio atual</div><div class="ph-v">${Fmt.brl(s.custoMedio)}</div></div>
-        <div class="ph-cell"><div class="ph-l">Preço atual</div><div class="ph-v">${Fmt.brl(this.cache.p.preco)}</div></div>
-        <div class="ph-cell"><div class="ph-l">Margem atual</div><div class="ph-v">${Fmt.pct(this.cache.p.preco ? (this.cache.p.preco - s.custoMedio) / this.cache.p.preco * 100 : 0)}</div></div>
-        <div class="ph-cell"><div class="ph-l">Margem média realizada</div><div class="ph-v">${Fmt.pct(s.margem)}</div></div></div>`;
+
+  conferenciaHtml() {
+    return `<div class="ph-section-t">Conferência de estoque</div>
+      <div class="ph-conf">
+        <div class="ph-conf-row">
+          <div class="ph-conf-box"><div class="ph-l">Estoque do sistema</div><div class="ph-conf-num">${this.cache.p.qtd}</div></div>
+          <div class="ph-conf-box"><div class="ph-l">Estoque físico (contagem)</div><input type="number" id="ph-fisico" value="${esc(this.fisico)}" placeholder="0" oninput="ProdHist.confInput(this.value)"></div>
+        </div>
+        <div id="ph-conf-res">${this.confResHtml()}</div>
+      </div>`;
+  },
+
+  graficosHtml() {
+    const c = this.cache, fin = this.canFin();
+    const estoque = this.lineChart(c.estoquePts, '#5b8cff', v => v + ' un', true);
+    let custoBlock = '';
+    if (fin) {
+      const cp = c.custoPts;
+      const vals = cp.map(x => x.val);
+      const stats = vals.length ? { min: Math.min(...vals), max: Math.max(...vals), avg: vals.reduce((a, b) => a + b, 0) / vals.length, atual: c.sum.custoMedio } : null;
+      const custoChart = this.lineChart(cp, '#f59e0b', v => Fmt.brl(v));
+      custoBlock = `<div class="ph-graf">
+        <div class="ph-graf-h">Evolução do custo ${stats ? `<span class="ph-graf-stats">mín ${Fmt.brl(stats.min)} · máx ${Fmt.brl(stats.max)} · médio ${Fmt.brl(stats.avg)} · atual ${Fmt.brl(stats.atual)}</span>` : ''}</div>
+        <div class="ph-chart">${custoChart}</div></div>`;
     }
-    return `${legend}<div class="ph-chart">${chart}</div>${extra}`;
+    return `<div class="ph-section-t">Evolução</div>
+      <div class="ph-grafs">
+        <div class="ph-graf"><div class="ph-graf-h">Evolução do estoque <span class="ph-graf-stats">inicial ${c.estoqueInicial} → atual ${c.sum.estoqueAtual} un</span></div><div class="ph-chart">${estoque}</div></div>
+        ${custoBlock}
+      </div>`;
   },
-  lineChart(series) {
-    const all = [].concat(...series.map(s => s.points));
-    if (all.length < 2) return this.empty('Sem dados suficientes para gerar o gráfico (são necessárias ao menos 2 movimentações).');
-    const ts = all.map(p => +new Date(p.t)), vs = all.map(p => p.val);
+
+  timelineHtml() {
+    const rows = this.filteredMovs().slice().reverse(); // mais recente primeiro
+    const presetOpts = [['all', 'Todo o período'], ['hoje', 'Hoje'], ['7d', '7 dias'], ['30d', '30 dias'], ['mes', 'Este mês'], ['6m', '6 meses'], ['ano', '1 ano'], ['custom', 'Personalizado']];
+    const catOpts = [['', 'Todas as movimentações'], ['in', '🟢 Entradas'], ['out', '🔴 Saídas'], ['venda', 'Vendas'], ['compra', 'Compras / entradas'], ['recebido', 'Recebidos em pagamento'], ['adj', '🟡 Ajustes']];
+    const custom = this.f.preset === 'custom' ? `<input type="date" id="ph-de" value="${this.f.de}" onchange="ProdHist.setCustom()"><span class="muted">até</span><input type="date" id="ph-ate" value="${this.f.ate}" onchange="ProdHist.setCustom()">` : '';
+    const filtros = `<div class="ph-fbar">
+      <select onchange="ProdHist.setPreset(this.value)">${presetOpts.map(o => `<option value="${o[0]}" ${this.f.preset === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>
+      ${custom}
+      <select onchange="ProdHist.setCat(this.value)">${catOpts.map(o => `<option value="${o[0]}" ${this.f.cat === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>
+    </div>`;
+    const body = rows.length ? rows.map(m => this.movCard(m)).join('') : '<div class="ph-empty">Nenhuma movimentação no filtro selecionado.</div>';
+    return `<div class="ph-section-t ph-tl-title">Linha do tempo <span class="muted" style="font-weight:400;font-size:12px">— saldo após cada movimentação</span></div>
+      ${filtros}
+      <div class="ph-timeline">${body}</div>`;
+  },
+
+  movCard(m) {
+    const fin = this.canFin();
+    const kindCls = m.kind === 'in' ? 'in' : (m.kind === 'out' ? 'out' : 'adj');
+    const ico = m.kind === 'in' ? '🟢' : (m.kind === 'out' ? '🔴' : '🟡');
+    const sign = m.delta > 0 ? '+' : '';
+    const deltaBadge = `<span class="ph-delta ${kindCls}">${sign}${m.delta}</span>`;
+    // saldo antes/depois — SEMPRE presente
+    const saldo = `<div class="ph-saldo"><span>Saldo: <b>${m.saldoAntes}</b></span><span class="ph-arrow">→</span><span><b>${m.saldoApos}</b> un</span></div>`;
+    // detalhes contextuais
+    let det = '';
+    if (m.cat === 'venda') {
+      det = `<div class="ph-det">
+        <span>Venda <a class="ph-link" onclick="ProdHist.abrirVenda('${m.vendaId}')">${m.numero}</a></span>
+        <span>${m.qtd} × ${Fmt.brl(m.valorUnit)}</span>
+        ${fin ? `<span>Custo ${Fmt.brl(m.custo)}</span><span class="ph-lucro ${m.lucroLiq >= 0 ? 'pos' : 'neg'}">Lucro ${Fmt.brl(m.lucroLiq)}</span>` : ''}
+        ${m.forma ? `<span class="muted">${esc(m.forma)}</span>` : ''}
+      </div>`;
+    } else if (m.cat === 'compra') {
+      det = `<div class="ph-det">
+        <span>${m.numero ? (m.tipo.indexOf('Entrada') >= 0 ? 'Entrada' : 'Compra') + ' <a class="ph-link" onclick="ProdHist.abrirCompra(\'' + m.compraId + '\')">' + m.numero + '</a>' : ''}</span>
+        <span>${m.qtd} un</span>
+        ${fin ? `<span>Custo unit. ${Fmt.brl(m.custoUnit)}</span><span>Total ${Fmt.brl(m.valorTotal)}</span>` : ''}
+        ${m.fornecedor && m.fornecedor !== '—' ? `<span class="muted">${esc(m.fornecedor)}</span>` : ''}
+      </div>`;
+    } else if (m.cat === 'recebido') {
+      det = `<div class="ph-det">
+        <span>Recebido na venda <a class="ph-link" onclick="ProdHist.abrirVenda('${m.vendaId}')">${m.numero}</a></span>
+        <span>${m.qtd} un</span>
+        ${fin ? `<span>Valor atribuído ${Fmt.brl(m.valorTotal)}</span>` : ''}
+        ${m.obs ? `<span class="muted">${esc(m.obs)}</span>` : ''}
+      </div>`;
+    } else if (m.cat === 'entrada') {
+      det = `<div class="ph-det"><span>${m.qtd} un</span>${fin && m.custoUnit ? `<span>Custo unit. ${Fmt.brl(m.custoUnit)}</span>` : ''}${m.obs ? `<span class="muted">${esc(m.obs)}</span>` : ''}</div>`;
+    } else if (m.cat === 'ajuste') {
+      det = `<div class="ph-det"><span>${m.motivo ? esc(m.motivo) : 'Sem motivo informado'}</span></div>`;
+    }
+    return `<div class="ph-mv ${kindCls}">
+      <div class="ph-mv-ico">${ico}</div>
+      <div class="ph-mv-body">
+        <div class="ph-mv-top"><b>${esc(m.tipo)}</b> ${deltaBadge}<span class="ph-mv-date">${Fmt.datetime(m.data)}</span></div>
+        ${saldo}
+        ${det}
+        <div class="ph-mv-foot muted">👤 ${esc(m.responsavel || '—')}</div>
+      </div></div>`;
+  },
+
+  /* ---------- gráfico de linha (SVG) ---------- */
+  lineChart(points, color, fmt, isStock) {
+    const pts = (points || []).filter(p => p && p.val != null).sort((a, b) => new Date(a.t) - new Date(b.t));
+    if (pts.length < 2) return `<div class="ph-empty">Poucos dados para o gráfico (mínimo 2 pontos).</div>`;
+    const ts = pts.map(p => +new Date(p.t)), vs = pts.map(p => p.val);
     let tmin = Math.min(...ts), tmax = Math.max(...ts); if (tmin === tmax) { tmin -= 864e5; tmax += 864e5; }
-    let vmin = 0, vmax = Math.max(...vs); if (vmax === vmin) vmax = vmin + 1; vmax *= 1.12;
-    const W = 640, H = 250, pl = 56, pr = 14, pt = 14, pb = 30;
+    let vmin = Math.min(0, ...vs), vmax = Math.max(...vs); if (vmax === vmin) vmax = vmin + 1; vmax += (vmax - vmin) * 0.12;
+    const W = 560, H = 210, pl = 52, pr = 14, pt = 14, pb = 28;
     const x = t => pl + ((+new Date(t)) - tmin) / (tmax - tmin) * (W - pl - pr);
     const y = v => pt + (1 - (v - vmin) / (vmax - vmin)) * (H - pt - pb);
     let g = '';
-    for (let i = 0; i <= 4; i++) { const v = vmin + (vmax - vmin) * i / 4, yy = y(v); g += `<line x1="${pl}" y1="${yy}" x2="${W - pr}" y2="${yy}" stroke="var(--line,#2a2f3a)" stroke-width="1"/><text x="${pl - 6}" y="${yy + 3}" text-anchor="end" font-size="10" fill="var(--txt-2,#9aa3b2)">${Fmt.brl(v).replace('R$ ', '')}</text>`; }
-    const tdiv = 4;
-    for (let i = 0; i <= tdiv; i++) { const t = tmin + (tmax - tmin) * i / tdiv, xx = x(new Date(t)); g += `<text x="${xx}" y="${H - 10}" text-anchor="middle" font-size="10" fill="var(--txt-2,#9aa3b2)">${new Date(t).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</text>`; }
-    let paths = '';
-    series.forEach(s => {
-      if (!s.points.length) return;
-      const d = s.points.map((p, i) => (i ? 'L' : 'M') + x(p.t).toFixed(1) + ' ' + y(p.val).toFixed(1)).join(' ');
-      paths += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2.5"/>`;
-      paths += s.points.map(p => `<circle cx="${x(p.t).toFixed(1)}" cy="${y(p.val).toFixed(1)}" r="3.5" fill="${s.color}"><title>${new Date(p.t).toLocaleDateString('pt-BR')} · ${Fmt.brl(p.val)}</title></circle>`).join('');
-    });
-    return `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet">${g}${paths}</svg>`;
+    for (let i = 0; i <= 4; i++) { const v = vmin + (vmax - vmin) * i / 4, yy = y(v); g += `<line x1="${pl}" y1="${yy.toFixed(1)}" x2="${W - pr}" y2="${yy.toFixed(1)}" stroke="var(--line,#2a2f3a)"/><text x="${pl - 6}" y="${(yy + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--txt-3,#9aa3b2)">${(fmt(v) + '').replace('R$ ', '')}</text>`; }
+    for (let i = 0; i <= 4; i++) { const t = tmin + (tmax - tmin) * i / 4, xx = x(new Date(t)); g += `<text x="${xx.toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="10" fill="var(--txt-3,#9aa3b2)">${new Date(t).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</text>`; }
+    const d = pts.map((p, i) => (i ? (isStock ? 'H' + x(p.t).toFixed(1) + ' V' + y(p.val).toFixed(1) : 'L' + x(p.t).toFixed(1) + ' ' + y(p.val).toFixed(1)) : 'M' + x(p.t).toFixed(1) + ' ' + y(p.val).toFixed(1))).join(' ');
+    const area = `${d} L${x(pts[pts.length - 1].t).toFixed(1)} ${y(vmin).toFixed(1)} L${x(pts[0].t).toFixed(1)} ${y(vmin).toFixed(1)} Z`;
+    const dots = pts.map(p => `<circle cx="${x(p.t).toFixed(1)}" cy="${y(p.val).toFixed(1)}" r="3" fill="${color}"><title>${new Date(p.t).toLocaleDateString('pt-BR')} · ${fmt(p.val)}</title></circle>`).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMidYMid meet">${g}<path d="${area}" fill="${color}" opacity="0.10"/><path d="${d}" fill="none" stroke="${color}" stroke-width="2.4"/>${dots}</svg>`;
   },
 
-  empty(msg) { return `<div class="muted" style="text-align:center;padding:34px">${esc(msg)}</div>`; },
-
-  /* ---------- exportação ---------- */
+  /* ---------- exportação (livro-razão com saldos) ---------- */
   exportData() {
     const fin = this.canFin();
-    if (this.tab === 'vendas') {
-      const head = ['Data', 'Tipo', 'Qtd', 'Valor unit.', 'Valor total', 'Desconto', 'Nº venda', 'Pagamento'].concat(fin ? ['Lucro bruto', 'Taxas', 'Lucro líquido'] : []).concat(['Responsável']);
-      const aoa = [head];
-      this.filtered(this.cache.saidas).forEach(e => aoa.push([Fmt.datetime(e.data), e.tipo, e.qtd, e.valorUnit, e.valorTotal, e.desconto, e.vendaNum, e.forma].concat(fin ? [e.lucroBruto, e.taxaItem, e.lucroLiq] : []).concat([e.responsavel])));
-      return { aoa, name: 'Vendas' };
-    }
-    if (this.tab === 'timeline') {
-      const aoa = [['Data', 'Tipo', 'Descrição']];
-      this.filtered(this.timelineRows()).forEach(e => aoa.push([Fmt.datetime(e.data), e.tipo, e.txt]));
-      return { aoa, name: 'Linha do Tempo' };
-    }
-    // compras (default)
-    const head = ['Data', 'Tipo', 'Qtd'].concat(fin ? ['Custo unit.', 'Custo total'] : []).concat(['Fornecedor', 'Origem', 'Observação', 'Responsável']);
+    const head = ['Data/Hora', 'Movimentação', 'Qtd', 'Saldo antes', 'Saldo depois'].concat(fin ? ['Custo unit.', 'Valor total', 'Lucro líq.'] : []).concat(['Nº venda/compra', 'Responsável', 'Detalhe']);
     const aoa = [head];
-    this.filtered(this.cache.entradas).forEach(e => aoa.push([Fmt.datetime(e.data), e.tipo, e.qtd].concat(fin ? [e.custoUnit, e.custoTotal] : []).concat([e.fornecedor, e.origem, e.obs, e.responsavel])));
-    return { aoa, name: 'Compras' };
+    this.filteredMovs().forEach(m => aoa.push([
+      Fmt.datetime(m.data), m.tipo, m.delta, m.saldoAntes, m.saldoApos
+    ].concat(fin ? [m.custoUnit || m.custo || '', m.valorTotal || '', m.lucroLiq != null ? m.lucroLiq : ''] : []).concat([m.numero || '', m.responsavel || '', m.motivo || m.obs || m.forma || ''])));
+    return { aoa, name: 'Movimentacoes' };
   },
   exportXlsx() {
     const d = this.exportData();
     const slug = (this.cache.p.nome || 'produto').replace(/[^\w]+/g, '-').slice(0, 30);
-    Exporter.xlsx('historico-' + slug + '-' + d.name.toLowerCase() + '.xlsx', d.name, d.aoa);
+    if (typeof Exporter !== 'undefined' && Exporter.xlsx) Exporter.xlsx('historico-' + slug + '.xlsx', 'Movimentações', d.aoa);
   },
   exportPdf() {
-    const d = this.exportData(), p = this.cache.p, s = this.cache.sum, fin = this.canFin();
+    const d = this.exportData(), p = this.cache.p, s = this.cache.sum, fin = this.canFin(), c = this.cache;
     const th = d.aoa[0].map(h => `<th>${esc(h)}</th>`).join('');
-    const body = d.aoa.slice(1).map(r => `<tr>${r.map((c, i) => `<td class="${typeof c === 'number' ? 'num' : ''}">${typeof c === 'number' && i > 0 ? (d.aoa[0][i].match(/Custo|Valor|Lucro|Taxa|Desconto/) ? Fmt.brl(c) : c) : esc(c)}</td>`).join('')}</tr>`).join('');
+    const bd = d.aoa.slice(1).map(r => `<tr>${r.map((cell, i) => `<td class="${typeof cell === 'number' ? 'num' : ''}">${esc(cell)}</td>`).join('')}</tr>`).join('');
     const kpis = `<div class="kpis">
-      <div class="k"><div class="l">Estoque atual</div><div class="v">${p.qtd} un</div></div>
-      <div class="k"><div class="l">Qtd comprada</div><div class="v">${s.qtdComprada}</div></div>
-      <div class="k"><div class="l">Qtd vendida</div><div class="v">${s.qtdVendida}</div></div>
-      ${fin ? `<div class="k"><div class="l">Lucro total</div><div class="v">${Fmt.brl(s.lucroTotal)}</div></div><div class="k"><div class="l">Margem média</div><div class="v">${Fmt.pct(s.margem)}</div></div>` : ''}</div>`;
-    Exporter.pdf('Histórico do Produto — ' + p.nome + ' (' + d.name + ')', `<h1 style="font-size:15px;margin:0 0 10px">${esc(p.nome)} · ${esc(p.sku)}</h1>${kpis}<table><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table>`);
+      <div class="k"><div class="l">Estoque inicial</div><div class="v">${c.estoqueInicial} un</div></div>
+      <div class="k"><div class="l">Entradas</div><div class="v">${s.totalEntradas} un</div></div>
+      <div class="k"><div class="l">Saídas</div><div class="v">${s.totalSaidas} un</div></div>
+      <div class="k"><div class="l">Estoque atual</div><div class="v">${s.estoqueAtual} un</div></div>
+      ${fin ? `<div class="k"><div class="l">Custo médio</div><div class="v">${Fmt.brl(s.custoMedio)}</div></div>` : ''}</div>`;
+    if (typeof Exporter !== 'undefined' && Exporter.pdf) Exporter.pdf('Histórico — ' + p.nome, `<h1 style="font-size:15px;margin:0 0 10px">${esc(p.nome)} · ${esc(p.sku)}</h1>${kpis}<table><thead><tr>${th}</tr></thead><tbody>${bd}</tbody></table>`);
   },
 
-  /* ---------- estilos (injetados uma vez) ---------- */
+  /* ---------- estilos ---------- */
   injectCss() {
     if (document.getElementById('ph-css')) return;
     const css = `
-    .ph-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
-    .ph-cell{background:var(--bg-2,#1c1f27);border:1px solid var(--line,#2a2f3a);border-radius:9px;padding:8px 10px}
-    .ph-l{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--txt-2,#9aa3b2)}
-    .ph-v{font-size:14px;font-weight:600;margin-top:2px}
-    .ph-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:14px 0 10px;border-bottom:1px solid var(--line,#2a2f3a);padding-bottom:8px}
-    .ph-tab{background:transparent;border:1px solid var(--line,#2a2f3a);color:var(--txt-2,#9aa3b2);padding:7px 12px;border-radius:8px;cursor:pointer;font-size:12.5px;font-weight:600}
-    .ph-tab.on{background:var(--accent,#5b8cff);border-color:var(--accent,#5b8cff);color:#fff}
-    .ph-fbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
-    .ph-fbar label{font-size:11.5px;color:var(--txt-2,#9aa3b2);display:flex;flex-direction:column;gap:2px}
-    .ph-fbar input,.ph-fbar select{padding:6px 8px;border-radius:7px;border:1px solid var(--line,#2a2f3a);background:var(--bg-2,#1c1f27);color:var(--txt,#e7eaf0);font-size:12.5px}
-    .ph-fbar .grow{flex:1;min-width:140px;align-self:flex-end}
-    .ph-timeline{display:flex;flex-direction:column;gap:0;position:relative}
-    .ph-tl-item{display:flex;gap:12px;padding:9px 0;border-left:2px solid var(--line,#2a2f3a);margin-left:14px;padding-left:16px;position:relative}
-    .ph-tl-ico{position:absolute;left:-15px;top:8px;width:26px;height:26px;border-radius:50%;background:var(--bg-2,#1c1f27);border:1px solid var(--line,#2a2f3a);display:flex;align-items:center;justify-content:center;font-size:13px}
-    .ph-tl-body{flex:1;margin-left:8px}
-    .ph-tl-top{display:flex;justify-content:space-between;gap:8px;font-size:12.5px}
-    .ph-tl-txt{font-size:12.5px;color:var(--txt-2,#9aa3b2);margin-top:2px}
-    .ph-legend{display:flex;gap:16px;margin-bottom:8px;font-size:12px}
-    .ph-legend span{display:flex;align-items:center;gap:6px}
-    .ph-legend i{width:14px;height:4px;border-radius:2px;display:inline-block}
-    .ph-chart{background:var(--bg-2,#1c1f27);border:1px solid var(--line,#2a2f3a);border-radius:10px;padding:10px}
+    #ph-root{display:flex;flex-direction:column;gap:8px}
+    .ph-section-t{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--txt-3,#9aa3b2);margin:14px 0 2px}
+    .ph-kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+    .ph-kpi{background:var(--bg-2,#1c1f27);border:1px solid var(--line,#2a2f3a);border-radius:11px;padding:10px 12px}
+    .ph-kpi span{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--txt-3,#9aa3b2)}
+    .ph-kpi b{display:block;font-size:17px;font-weight:800;margin-top:3px}
+    .ph-kpi.hl{background:linear-gradient(135deg,rgba(91,140,255,.16),rgba(91,140,255,.04));border-color:rgba(91,140,255,.4)}
+    .ph-kpi.in b{color:#16a34a}.ph-kpi.out b{color:#ef4444}
+    .ph-balance{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;margin-top:8px}
+    .ph-bal-chip{flex:1;min-width:96px;background:var(--bg-2,#1c1f27);border:1px solid var(--line,#2a2f3a);border-radius:11px;padding:10px 12px;text-align:center}
+    .ph-bal-chip.in{border-color:rgba(34,197,94,.4)}.ph-bal-chip.out{border-color:rgba(239,68,68,.4)}
+    .ph-bal-chip.eq{background:linear-gradient(135deg,rgba(91,140,255,.16),rgba(91,140,255,.04));border-color:rgba(91,140,255,.5)}
+    .ph-bal-l{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--txt-3,#9aa3b2)}
+    .ph-bal-v{font-size:18px;font-weight:800;margin-top:3px}
+    .ph-bal-op{display:flex;align-items:center;font-size:20px;font-weight:800;color:var(--txt-3,#9aa3b2)}
+    .ph-conf{background:var(--bg-2,#1c1f27);border:1px solid var(--line,#2a2f3a);border-radius:12px;padding:12px}
+    .ph-conf-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+    .ph-conf-box{flex:1;min-width:150px;background:var(--bg,#14161b);border:1px solid var(--line,#2a2f3a);border-radius:10px;padding:9px 12px}
+    .ph-conf-num{font-size:24px;font-weight:800;margin-top:2px}
+    .ph-conf-box input{width:100%;background:transparent;border:none;color:var(--txt,#e7eaf0);font-size:24px;font-weight:800;margin-top:2px;outline:none}
+    .ph-conf-ok{background:rgba(34,197,94,.14);color:#16a34a;border:1px solid rgba(34,197,94,.4);border-radius:9px;padding:9px 12px;font-weight:700}
+    .ph-conf-warn{background:rgba(245,158,11,.14);color:#d97706;border:1px solid rgba(245,158,11,.45);border-radius:9px;padding:9px 12px;font-weight:700}
+    .ph-conf-hint{font-size:12px;color:var(--txt-3,#9aa3b2)}
+    .ph-adj{display:flex;gap:8px;margin-top:9px;flex-wrap:wrap}
+    .ph-adj input{flex:1;min-width:180px;padding:8px 10px;border-radius:8px;border:1px solid var(--line,#2a2f3a);background:var(--bg,#14161b);color:var(--txt,#e7eaf0);font-size:12.5px}
+    .ph-grafs{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px}
+    .ph-graf{background:var(--bg-2,#1c1f27);border:1px solid var(--line,#2a2f3a);border-radius:12px;padding:10px 12px}
+    .ph-graf-h{font-size:12.5px;font-weight:700;margin-bottom:6px;display:flex;flex-direction:column}
+    .ph-graf-stats{font-weight:400;font-size:11px;color:var(--txt-3,#9aa3b2);margin-top:2px}
+    .ph-chart{overflow:hidden}
+    .ph-fbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+    .ph-fbar select,.ph-fbar input{padding:7px 9px;border-radius:8px;border:1px solid var(--line,#2a2f3a);background:var(--bg-2,#1c1f27);color:var(--txt,#e7eaf0);font-size:12.5px}
+    .ph-timeline{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+    .ph-mv{display:flex;gap:11px;background:var(--bg-2,#1c1f27);border:1px solid var(--line,#2a2f3a);border-left-width:4px;border-radius:11px;padding:10px 12px}
+    .ph-mv.in{border-left-color:#22c55e}.ph-mv.out{border-left-color:#ef4444}.ph-mv.adj{border-left-color:#f59e0b}
+    .ph-mv-ico{font-size:16px;line-height:1.4}
+    .ph-mv-body{flex:1;min-width:0}
+    .ph-mv-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13.5px}
+    .ph-mv-date{margin-left:auto;font-size:11.5px;color:var(--txt-3,#9aa3b2)}
+    .ph-delta{font-weight:800;font-size:12.5px;padding:1px 8px;border-radius:20px}
+    .ph-delta.in{background:rgba(34,197,94,.16);color:#16a34a}.ph-delta.out{background:rgba(239,68,68,.16);color:#ef4444}.ph-delta.adj{background:rgba(245,158,11,.16);color:#d97706}
+    .ph-saldo{display:flex;align-items:center;gap:8px;font-size:13px;margin:5px 0;background:var(--bg,#14161b);border-radius:8px;padding:5px 10px;width:fit-content}
+    .ph-saldo b{font-size:14px}
+    .ph-arrow{color:var(--txt-3,#9aa3b2)}
+    .ph-det{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--txt-2,#c3c9d4);margin-top:2px}
+    .ph-link{color:var(--accent,#5b8cff);cursor:pointer;font-weight:700;text-decoration:underline}
+    .ph-lucro.pos{color:#16a34a;font-weight:700}.ph-lucro.neg{color:#ef4444;font-weight:700}
+    .ph-mv-foot{font-size:11px;margin-top:5px}
+    .ph-empty{text-align:center;padding:24px;color:var(--txt-3,#9aa3b2);font-size:13px}
     `;
     const st = document.createElement('style'); st.id = 'ph-css'; st.textContent = css; document.head.appendChild(st);
   }
