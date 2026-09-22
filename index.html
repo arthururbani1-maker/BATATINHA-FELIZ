@@ -683,7 +683,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 6.9 · troca com devolução de diferença</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 7.0 · troca com devolução + confirmação de caixa</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -2539,9 +2539,18 @@ const Modules = {
     const c = this.cart, { total, custoTot, bruto } = this.coCtx, pays = this.coPays;
     const totalVenda = this.coCtx.totalVenda != null ? this.coCtx.totalVenda : total;
     const usadoVal = this.coCtx.usadoVal || 0;
+    const devolucao = this.coCtx.devolucao || 0;
     const soma = pays.reduce((s, p) => s + (+p.valor || 0), 0);
     const cash = pays.filter(p => p.method === 'Dinheiro').reduce((s, p) => s + (+p.valor || 0), 0);
     const temItemPrevenda = c.itens.some(i => i.prevenda);
+    // ----- TROCA com devolução: confirma a saída ANTES de finalizar (nada é gravado se cancelar) -----
+    if (devolucao > 0) {
+      const devFormaChk = fval('co-devforma') || 'Dinheiro';
+      const aviso = devFormaChk === 'Dinheiro'
+        ? 'Esta operação irá retirar ' + Fmt.brl(devolucao) + ' do caixa (devolução ao cliente). Deseja continuar?'
+        : 'Esta operação irá devolver ' + Fmt.brl(devolucao) + ' ao cliente via ' + devFormaChk + ' (saída no financeiro). Deseja continuar?';
+      if (typeof window !== 'undefined' && window.confirm && !window.confirm(aviso)) return;
+    }
     // ----- Venda mista (itens imediatos + itens de pré-venda) exige cliente -----
     let preCliente = '', preTel = '', preData = '';
     if (temItemPrevenda) {
@@ -2621,7 +2630,6 @@ const Modules = {
     // ---- TROCA com DEVOLUÇÃO: usado vale mais que o levado → a loja devolve a diferença.
     // Uma única operação (a mesma venda). NÃO é receita nem despesa: só sai dinheiro do caixa
     // (ou saída financeira, se PIX). O usado já entrou no estoque pelo valor atribuído. ----
-    const devolucao = this.coCtx.devolucao || 0;
     if (devolucao > 0) {
       const devForma = fval('co-devforma') || 'Dinheiro';
       const obsDev = 'Troca #' + (venda.numero || venda.id.slice(-4)) + ' — recebido ' + usados.map(u => u.nome).join(', ') + ' (' + Fmt.brl(usadoVal) + ') · entregue ' + c.itens.map(i => i.nome).join(', ') + ' (' + Fmt.brl(totalVenda) + ')';
