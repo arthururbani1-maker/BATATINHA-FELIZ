@@ -683,7 +683,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 7.0 · troca com devolução + confirmação de caixa</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 7.2 · usados com aprovação antes do estoque</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -734,7 +734,7 @@ const DB = (function () {
   const COLLECTIONS = [
     'produtos', 'categorias', 'marcas', 'fornecedores', 'compras',
     'vendas', 'avaliacoes', 'trocas', 'movimentacoes', 'garantias',
-    'financeiro', 'caixa', 'fechamentos', 'taxas', 'usuarios', 'modelosUsados', 'prevendas', 'cenarios', 'config'
+    'financeiro', 'caixa', 'fechamentos', 'taxas', 'usuarios', 'modelosUsados', 'prevendas', 'usadosPendentes', 'cenarios', 'config'
   ];
   let state = null;
 
@@ -2594,21 +2594,10 @@ const Modules = {
       bruto, desconto: c.desconto, total: totalVenda, aPagar: total, custoTotal: custoTot, lucro, taxaTotal, liquido, lucroLiquido,
       pagamentos, recebido: soma, troco, usadoEntrada: usados.length ? usados.map(u => u.nome).join(', ') : null, usadoValor: usadoVal, usados: usados, usuario: operador, cupom: cupomSnap
     });
-    // Cada usado recebido → reutiliza o produto do catálogo: +1 unidade (sem duplicar) e custo médio
-    usados.forEach(u => {
-      const un = u.qtd || 1, custoUnit = (u.valorUnit != null ? u.valorUnit : u.valor);
-      const p = DB.get('produtos', u.produtoId);
-      if (p) {
-        const qNova = p.qtd + un;
-        const custoMedio = qNova ? (((p.custoMedio || p.custo || 0) * p.qtd) + custoUnit * un) / qNova : custoUnit;
-        const patch = { qtd: qNova, custo: custoUnit, custoMedio: Math.round(custoMedio * 100) / 100 };
-        if (u.serie && !p.serie && un === 1) patch.serie = u.serie;
-        DB.update('produtos', u.produtoId, patch);
-      }
-      // Usado recebido como pagamento é uma forma NÃO-financeira: só entra no estoque/histórico,
-      // não gera saída financeira, não mexe no caixa e não cria conta a pagar.
-      DB.logMov('usado', 'Usado recebido na troca: ' + un + 'x ' + u.nome + (u.serie ? ' (S/N ' + u.serie + ')' : '') + ' — ' + Fmt.brl(u.valor) + ' · venda #' + venda.id.slice(-4) + ' (forma de pagamento não-financeira)', { valor: u.valor, refId: venda.id });
-    });
+    // Usado recebido como pagamento: NÃO entra no estoque na hora. Vira PENDÊNCIA vinculada à
+    // venda (EVENTO → APROVAÇÃO → MOVIMENTAÇÃO). O valor do usado já abateu o total como forma
+    // de pagamento não-financeira; só o ESTOQUE aguarda a aprovação em "Receber Usado".
+    if (usados.length && typeof UP !== 'undefined') UP.criarDaVenda(venda, usados);
     const formaStr = pagamentos.map(p => p.tipo + (p.parcelas > 1 ? ' ' + p.parcelas + 'x' : '')).join(' + ');
     DB.logMov('venda', 'Venda: ' + c.itens.map(i => i.qtd + 'x ' + i.nome).join(', ') + (usados.length ? ' (troca c/ ' + usados.length + ' usado(s))' : ''), { valor: totalVenda, refId: venda.id });
     // ---- Financeiro: separa o recebido AGORA (pago) do que será recebido DEPOIS via financeira (a receber) ----
@@ -2799,8 +2788,11 @@ const Modules = {
   usados() {
     const list = DB.all('produtos').filter(p => p.condicao === 'usado').slice().sort((a, b) => new Date(b.criadoEm || 0) - new Date(a.criadoEm || 0));
     const canFin = App.canFinance();
-    return `<div class="page-head"><div><h1>Receber Usado</h1><p>Cadastre um produto usado direto no estoque — sem etapa de avaliação</p></div>
+    const pendHtml = (typeof Modules.upPendentesHtml === 'function') ? Modules.upPendentesHtml() : '';
+    return `<div class="page-head"><div><h1>Receber Usado</h1><p>Usados recebidos em troca aguardam aprovação antes de entrar no estoque</p></div>
       <div class="actions"><button class="btn-primary" onclick="Modules.usadoReceber()">+ Receber usado</button></div></div>
+      ${pendHtml}
+      <div class="section-title">Usados no estoque</div>
       <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Categoria</th><th class="num">Qtd</th>${canFin ? '<th class="num">Custo</th>' : ''}<th class="num">Preço</th><th>Local</th><th></th></tr></thead>
       <tbody>${list.map(p => `<tr>
         <td class="strong prod-link" style="cursor:pointer" onclick="ProdHist.open('${p.id}')">${esc(p.nome)} 🔎<div class="muted" style="font-size:11px">${p.sku}${p.serie ? ' · S/N ' + p.serie : ''}</div></td>
@@ -3962,6 +3954,8 @@ PV.cancelarVenda = function (v, motivo) {
   DB.all('financeiro').filter(f => f.refId === v.id && (f.origem === 'venda' || f.origem === 'prevenda')).forEach(f => DB.remove('financeiro', f.id));
   // estorna caixa (dinheiro)
   if (typeof Caixa !== 'undefined' && Caixa.estornarVenda) Caixa.estornarVenda(v);
+  // estorna usados recebidos em troca (pendentes descartados; aprovados removidos do estoque)
+  if (typeof UP !== 'undefined' && UP.estornarPorVenda) UP.estornarPorVenda(v.id);
   DB.update('vendas', v.id, { cancelada: true, canceladaEm: new Date().toISOString(), motivoCancelamento: motivo || '', canceladaPor: PV.quem() });
   DB.logMov('devolucao', 'Pré-venda ' + PV.vLabel(v) + ' cancelada — estornada (' + Fmt.brl(v.total) + ')' + (motivo ? ' · ' + motivo : ''), { valor: v.total, refId: v.id });
 };
@@ -4098,7 +4092,12 @@ PV.migrarLegado = function () {
     const pagamentos = (pv.pagamentos || []).map(p => ({ tipo: p.forma || 'Dinheiro', valor: +p.valor || 0, parcelas: p.parcelas || 1, taxa: p.taxa || 0, data: p.data || pv.dataReserva, finId: p.finId || null, caixaId: p.caixaId || null }));
     const recebido = pagamentos.reduce((s, p) => s + p.valor, 0);
     const taxaTot = pagamentos.reduce((s, p) => s + (p.taxa || 0), 0);
+    // ID DETERMINÍSTICO (derivado da reserva): se dois aparelhos migrarem a mesma reserva,
+    // geram o MESMO id → a nuvem funde num registro só, sem duplicar. E não recria se já existe.
+    const migId = 'mig_' + pv.id;
+    if (DB.get('vendas', migId)) { DB.update('prevendas', pv.id, { migradoParaVenda: true, vendaId: migId }); return; }
     const venda = DB.insert('vendas', {
+      id: migId,
       data: pv.dataReserva || pv.criadoEm || new Date().toISOString(), numero: pv.numero, tipo: 'pre_venda', itens,
       cliente: pv.cliente || null, telefone: pv.telefone || null, temPrevenda: !entregue,
       bruto: total, desconto: 0, total, aPagar: total, custoTotal,
@@ -4124,6 +4123,47 @@ PV.migrarLegado = function () {
   if (cfg) DB.update('config', cfg.id, { preMigradoV1: true });
   if (n) DB.logMov('venda', n + ' pré-venda(s) antiga(s) migrada(s) para o modelo unificado de vendas.', { valor: 0 });
   return { migrados: n };
+};
+
+/* ===== LIMPEZA de pré-vendas DUPLICADAS (cópias criadas pela migração em >1 aparelho) =====
+   Roda a cada carga (auto-recuperável, também limpa duplicatas vindas de futuras sincronizações).
+   Agrupa por origem da migração (migradoDe) ou pelo número do pedido — que é único por venda —
+   e mantém apenas 1 registro por grupo, preservando o pagamento real (re-aponta 'pago' p/ o mantido
+   e remove só as contas 'a receber' duplicadas). NUNca junta vendas de números diferentes. */
+PV.dedupMigradas = function () {
+  const vendas = DB.all('vendas').filter(v => PV.isPre(v));
+  const groups = {};
+  vendas.forEach(v => {
+    const key = v.migradoDe ? ('mig:' + v.migradoDe) : (v.numero ? ('num:' + v.numero) : null);
+    if (!key) return;
+    (groups[key] = groups[key] || []).push(v);
+  });
+  let removed = 0;
+  Object.keys(groups).forEach(k => {
+    const arr = groups[k];
+    if (arr.length < 2) return;
+    const temPago = v => DB.all('financeiro').some(f => f.refId === v.id && f.status === 'pago');
+    // mantém: quem tem o pagamento real; senão, o não cancelado; senão, o de id menor (estável)
+    arr.sort((a, b) => {
+      const pa = temPago(a) ? 1 : 0, pb = temPago(b) ? 1 : 0;
+      if (pa !== pb) return pb - pa;
+      const ca = a.cancelada ? 1 : 0, cb = b.cancelada ? 1 : 0;
+      if (ca !== cb) return ca - cb;
+      return String(a.id).localeCompare(String(b.id));
+    });
+    const keep = arr[0];
+    arr.slice(1).forEach(dup => {
+      DB.all('financeiro').filter(f => f.refId === dup.id).forEach(f => {
+        if (f.status === 'pago') DB.update('financeiro', f.id, { refId: keep.id }); // preserva pagamento real
+        else DB.remove('financeiro', f.id);                                          // remove 'a receber' duplicado
+      });
+      DB.all('caixa').filter(cx => cx.refId === dup.id).forEach(cx => DB.update('caixa', cx.id, { refId: keep.id }));
+      DB.remove('vendas', dup.id);
+      removed++;
+    });
+  });
+  if (removed) DB.logMov('venda', removed + ' pré-venda(s) duplicada(s) removida(s) na limpeza automática.', { valor: 0 });
+  return { removed };
 };
 
 </script>
@@ -4531,9 +4571,9 @@ Modules.vdCancel = function (id) {
     DB.update('vendas', id, { cancelada: true, canceladaEm: new Date().toISOString() });
     const fin = DB.all('financeiro').find(f => f.refId === id && f.origem === 'venda');
     if (fin) DB.remove('financeiro', fin.id);
-    // se houve usados recebidos na troca: devolve cada unidade somada ao produto e estorna o custo
-    const usadosV = v.usados || (v.usado ? [v.usado] : []);
-    usadosV.forEach(u => { if (u && u.produtoId) { const p = DB.get('produtos', u.produtoId); if (p) DB.update('produtos', u.produtoId, { qtd: Math.max(0, p.qtd - 1) }); } });
+    // usados recebidos na troca: estorna via fluxo de pendências (qtd correta + reverte custo médio;
+    // pendências ainda não aprovadas são apenas descartadas, sem tocar no estoque)
+    if (typeof UP !== 'undefined' && UP.estornarPorVenda) UP.estornarPorVenda(id);
     DB.all('produtos').filter(p => p.vendaOrigemId === id).forEach(p => DB.remove('produtos', p.id));
     DB.all('financeiro').filter(f => f.refId === id && f.origem === 'usado').forEach(f => DB.remove('financeiro', f.id));
     // se foi paga em dinheiro, estorna o Caixa da Loja
@@ -7817,6 +7857,193 @@ Modules.mpInsights = function (rows, C, canFin) {
 
 </script>
   <script>
+/* ===== usados.js ===== */
+/* ============ RICO GAMES ERP — Usados recebidos em troca: PENDENTE → APROVAÇÃO → ESTOQUE ============
+   REGRA: um produto usado entregue como forma de pagamento NÃO entra no estoque na hora.
+   Ele vira uma PENDÊNCIA (coleção `usadosPendentes`) vinculada à venda. Só depois que o
+   operador confere os dados e APROVA é que o produto entra no estoque disponível, com trilha
+   (entrada em p.entradas[] + movimentação com origem, responsável, data, qtd, custo e refId).
+
+   Isso não altera o financeiro da venda: o valor do usado continua abatendo o total como
+   forma de pagamento não-financeira. Só o ESTOQUE passa a exigir aprovação. */
+const UP = {
+  COLL: 'usadosPendentes',
+  ST: { pendente: ['Pendente de cadastro', 'b-amber'], aprovado: ['Aprovado — no estoque', 'b-green'], rejeitado: ['Rejeitado', 'b-gray'], estornado: ['Estornado (venda cancelada)', 'b-red'] },
+  quem() { return (typeof App !== 'undefined' && App.user() && App.user().nome) ? App.user().nome : 'Admin'; },
+  all() { return DB.all(this.COLL); },
+  list(status) { return this.all().filter(u => !status || u.status === status).sort((a, b) => new Date(b.data || 0) - new Date(a.data || 0)); },
+  daVenda(vendaId) { return this.all().filter(u => u.vendaId === vendaId); },
+  badge(u) { const m = this.ST[u.status] || ['—', 'b-gray']; return `<span class="badge ${m[1]}">${m[0]}</span>`; },
+  countPendentes() { return this.list('pendente').length; },
+
+  /* ---- cria pendências a partir dos usados de uma venda (NÃO toca no estoque) ---- */
+  criarDaVenda(venda, usados) {
+    (usados || []).forEach(u => {
+      const un = u.qtd || 1;
+      const pend = DB.insert(this.COLL, {
+        vendaId: venda.id, numeroVenda: venda.numero || null,
+        produtoId: u.produtoId || null, nome: u.nome, categoria: u.categoria || '', marca: u.marca || '',
+        modelo: u.modelo || '', condicao: u.condicao || 'usado', estado: u.estado || '', serie: u.serie || '',
+        controle: !!u.controle, cabos: !!u.cabos, caixa: !!u.caixa,
+        qtd: un, valorUnit: (u.valorUnit != null ? u.valorUnit : (u.valor || 0) / un), valor: u.valor || 0,
+        obs: u.obs || '', responsavel: this.quem(), data: new Date().toISOString(),
+        status: 'pendente', aprovadoEm: null, aprovadoPor: null
+      });
+      u.pendenteId = pend.id; // vínculo de volta na venda
+      DB.logMov('usado', 'Usado recebido (PENDENTE de cadastro): ' + un + 'x ' + u.nome + (u.serie ? ' (S/N ' + u.serie + ')' : '') + ' — ' + Fmt.brl(u.valor) + ' · venda #' + (venda.numero || venda.id.slice(-4)) + ' · aguardando aprovação para entrar no estoque', { valor: u.valor, refId: venda.id });
+    });
+    // regrava a venda com os vínculos pendenteId (sem duplicar)
+    if (usados && usados.length) DB.update('vendas', venda.id, { usados });
+  },
+
+  /* ---- aprova uma pendência: entra no estoque (custo médio agregado) com trilha ---- */
+  aprovar(id, dados) {
+    const u = DB.get(this.COLL, id); if (!u) return { ok: false };
+    if (u.status === 'aprovado') return { ok: false, msg: 'Já aprovado.' };
+    const d = dados || {};
+    const nome = d.nome || u.nome;
+    const qtd = Math.max(1, parseInt(d.qtd != null ? d.qtd : u.qtd, 10) || 1);
+    const valorUnit = (d.valorUnit != null ? d.valorUnit : u.valorUnit) || 0;
+    const valorTotal = Math.round(valorUnit * qtd * 100) / 100;
+    const resp = this.quem();
+    let produtoId = u.produtoId, p = produtoId ? DB.get('produtos', produtoId) : null;
+    const patchExtra = {
+      categoria: d.categoria || u.categoria || (p && p.categoria) || 'Usados',
+      marca: d.marca || u.marca || (p && p.marca) || '—',
+      modelo: d.modelo || u.modelo || (p && p.modelo) || '',
+      condicao: d.condicao || u.condicao || 'usado'
+    };
+    if (!p) {
+      // materializa o produto só agora (na aprovação) — evita produto órfão criado no PDV
+      p = DB.insert('produtos', Object.assign({
+        nome, sku: 'USD-' + Date.now().toString(36).toUpperCase().slice(-5), barcode: '',
+        qtd: 0, min: 1, custo: 0, custoMedio: 0, preco: d.preco != null ? d.preco : Math.round(valorUnit * 1.5),
+        serie: u.serie || '', local: 'Usados', criadoEm: new Date().toISOString(), entradas: []
+      }, patchExtra));
+      produtoId = p.id;
+    }
+    const qAntes = p.qtd || 0, cmAntes = p.custoMedio || p.custo || 0;
+    const qNova = qAntes + qtd;
+    const custoMedio = qNova ? ((cmAntes * qAntes) + valorUnit * qtd) / qNova : valorUnit;
+    const ents = (p.entradas || []).slice();
+    ents.unshift({ data: new Date().toISOString(), tipo: 'Usado recebido em troca (aprovado)', qtd, custoUnit: valorUnit, fornecedor: 'Cliente', obs: 'Venda #' + (u.numeroVenda || (u.vendaId || '').slice(-4)) + (d.obs || u.obs ? ' · ' + (d.obs || u.obs) : ''), responsavel: resp });
+    const patch = Object.assign({ qtd: qNova, custo: valorUnit, custoMedio: Math.round(custoMedio * 100) / 100, entradas: ents }, patchExtra);
+    if (u.serie && !p.serie && qtd === 1) patch.serie = u.serie;
+    if (d.nome) patch.nome = d.nome;
+    DB.update('produtos', produtoId, patch);
+    DB.update(this.COLL, id, {
+      status: 'aprovado', aprovadoEm: new Date().toISOString(), aprovadoPor: resp,
+      produtoId, nome, qtd, valorUnit, valor: valorTotal,
+      qtdAntes: qAntes, custoMedioAntes: cmAntes, // p/ estorno preciso
+      categoria: patchExtra.categoria, marca: patchExtra.marca, modelo: patchExtra.modelo, condicao: patchExtra.condicao, obs: d.obs || u.obs || ''
+    });
+    DB.logMov('usado', 'Usado APROVADO e entrou no estoque: ' + qtd + 'x ' + nome + ' — ' + Fmt.brl(valorTotal) + ' · venda #' + (u.numeroVenda || (u.vendaId || '').slice(-4)), { valor: valorTotal, refId: produtoId });
+    return { ok: true, produtoId };
+  },
+
+  rejeitar(id, motivo) {
+    const u = DB.get(this.COLL, id); if (!u) return;
+    if (u.status === 'aprovado') return; // já entrou no estoque — use estorno via cancelamento
+    DB.update(this.COLL, id, { status: 'rejeitado', rejeitadoEm: new Date().toISOString(), rejeitadoPor: this.quem(), motivoRejeicao: motivo || '' });
+    DB.logMov('usado', 'Usado recebido REJEITADO (não entrou no estoque): ' + (u.qtd || 1) + 'x ' + u.nome + (motivo ? ' · ' + motivo : ''), { valor: 0, refId: u.vendaId });
+  },
+
+  /* ---- estorna as pendências de uma venda ao cancelá-la ---- */
+  estornarPorVenda(vendaId) {
+    this.daVenda(vendaId).forEach(u => {
+      if (u.status === 'aprovado' && u.produtoId) {
+        const p = DB.get('produtos', u.produtoId);
+        if (p) {
+          const qtd = u.qtd || 1, qAtual = p.qtd || 0;
+          const qNova = Math.max(0, qAtual - qtd);
+          // desfaz a contribuição do usado no custo médio agregado (aproximação segura)
+          let cm = p.custoMedio || p.custo || 0;
+          if (qNova > 0) { const rem = (cm * qAtual) - (u.valorUnit || 0) * qtd; cm = rem > 0 ? rem / qNova : (u.custoMedioAntes || cm); }
+          else cm = u.custoMedioAntes != null ? u.custoMedioAntes : cm;
+          const ents = (p.entradas || []).slice();
+          ents.unshift({ data: new Date().toISOString(), tipo: 'Estorno de usado (venda cancelada)', qtd: -qtd, custoUnit: u.valorUnit || 0, obs: 'Venda #' + (u.numeroVenda || vendaId.slice(-4)) + ' cancelada', responsavel: this.quem() });
+          DB.update('produtos', u.produtoId, { qtd: qNova, custoMedio: Math.round(cm * 100) / 100, entradas: ents });
+        }
+        DB.update(this.COLL, u.id, { status: 'estornado', estornadoEm: new Date().toISOString() });
+        DB.logMov('usado', 'Estorno de usado por cancelamento: ' + (u.qtd || 1) + 'x ' + u.nome + ' — removido do estoque', { valor: 0, refId: u.produtoId });
+      } else if (u.status === 'pendente') {
+        DB.update(this.COLL, u.id, { status: 'estornado', estornadoEm: new Date().toISOString() });
+      }
+    });
+  }
+};
+
+/* ================= UI: seção de pendentes dentro de "Receber Usado" ================= */
+Modules.upPendentesHtml = function () {
+  if (typeof UP === 'undefined') return '';
+  const pend = UP.list('pendente');
+  const recent = UP.all().filter(u => u.status !== 'pendente').slice(0, 6);
+  if (!pend.length && !recent.length) return '';
+  const rowsPend = pend.map(u => `<tr>
+    <td class="strong">${esc(u.nome)}${u.serie ? `<div class="muted" style="font-size:11px">S/N ${esc(u.serie)}</div>` : ''}</td>
+    <td>${esc(u.categoria || '—')}${u.estado ? ` · ${esc(u.estado)}` : ''}</td>
+    <td class="num">${u.qtd || 1}</td>
+    <td class="num strong">${Fmt.brl(u.valor)}</td>
+    <td>#${u.numeroVenda || (u.vendaId || '').slice(-4)}</td>
+    <td>${Fmt.date(u.data)}</td>
+    <td class="num" style="white-space:nowrap">
+      <button class="btn-primary btn-sm" onclick="Modules.upAprovar('${u.id}')">✓ Aprovar</button>
+      <button class="btn-ghost btn-sm" onclick="Modules.upRejeitar('${u.id}')">✕ Rejeitar</button>
+    </td></tr>`).join('');
+  const secPend = pend.length ? `<div class="card" style="border:1px solid var(--amber,#f59e0b);margin-bottom:16px">
+    <div class="section-title">⏳ Usados pendentes de cadastro <span class="muted" style="font-weight:500">· recebidos em troca · aguardando aprovação para entrar no estoque</span></div>
+    <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Categoria / estado</th><th class="num">Qtd</th><th class="num">Valor atribuído</th><th>Venda</th><th>Recebido</th><th></th></tr></thead><tbody>${rowsPend}</tbody></table></div>
+    <div class="muted" style="font-size:11.5px;margin-top:6px">Enquanto pendente, o produto NÃO aparece como estoque disponível. Aprovar dá entrada com trilha; rejeitar descarta sem tocar no estoque.</div>
+  </div>` : '';
+  const secRec = recent.length ? `<div class="card" style="margin-bottom:16px">
+    <div class="section-title">Histórico de recebimentos em troca</div>
+    <div class="table-wrap"><table><thead><tr><th>Produto</th><th class="num">Qtd</th><th class="num">Valor</th><th>Venda</th><th>Status</th></tr></thead>
+    <tbody>${recent.map(u => `<tr><td>${esc(u.nome)}</td><td class="num">${u.qtd || 1}</td><td class="num">${Fmt.brl(u.valor)}</td><td>#${u.numeroVenda || (u.vendaId || '').slice(-4)}</td><td>${UP.badge(u)}</td></tr>`).join('')}</tbody></table></div>
+  </div>` : '';
+  return secPend + secRec;
+};
+
+Modules.upAprovar = function (id) {
+  const u = DB.get(UP.COLL, id); if (!u) return Toast.err('Pendência não encontrada.');
+  const cats = [...new Set(DB.all('produtos').map(p => p.categoria).filter(Boolean))].sort();
+  Modal.open({
+    title: '✓ Aprovar usado — cadastrar no estoque', wide: true,
+    body: `<p class="muted" style="margin-bottom:12px">Confira/complete os dados. Ao aprovar, o produto entra no estoque com entrada registrada (venda #${u.numeroVenda || (u.vendaId || '').slice(-4)}).</p>
+      <div class="form-grid">
+        <div class="field full"><label>Produto *</label><input id="up-nome" value="${esc(u.nome || '')}"></div>
+        <div class="field"><label>Categoria</label><input id="up-cat" list="up-cats" value="${esc(u.categoria || '')}"><datalist id="up-cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
+        <div class="field"><label>Marca</label><input id="up-marca" value="${esc(u.marca || '')}"></div>
+        <div class="field"><label>Modelo</label><input id="up-modelo" value="${esc(u.modelo || '')}"></div>
+        <div class="field"><label>Estado</label><input id="up-estado" value="${esc(u.estado || '')}"></div>
+        <div class="field"><label>Quantidade</label><input id="up-qtd" type="number" min="1" value="${u.qtd || 1}"></div>
+        <div class="field"><label>Custo/valor atribuído (unit.)</label><input id="up-valor" type="text" inputmode="decimal" value="${String(u.valorUnit || 0).replace('.', ',')}"></div>
+        <div class="field"><label>Preço de venda sugerido</label><input id="up-preco" type="text" inputmode="decimal" placeholder="opcional"></div>
+        <div class="field full"><label>Observações</label><input id="up-obs" value="${esc(u.obs || '')}"></div>
+      </div>`,
+    foot: `<button class="btn-ghost" onclick="Modal.close()">Cancelar</button><button class="btn-primary" onclick="Modules.upAprovarSave('${id}')">Aprovar e dar entrada</button>`
+  });
+};
+Modules.upAprovarSave = function (id) {
+  const nome = fval('up-nome'); if (!nome) return Toast.err('Informe o produto.');
+  const valorUnit = moneyBR(fval('up-valor')); if (isNaN(valorUnit) || valorUnit < 0) return Toast.err('Valor atribuído inválido.');
+  const precoTxt = fval('up-preco'), preco = precoTxt ? moneyBR(precoTxt) : null;
+  const r = UP.aprovar(id, {
+    nome, categoria: fval('up-cat'), marca: fval('up-marca'), modelo: fval('up-modelo'), estado: fval('up-estado'),
+    qtd: parseInt(fval('up-qtd'), 10) || 1, valorUnit, preco: (preco != null && !isNaN(preco)) ? preco : null, obs: fval('up-obs')
+  });
+  if (!r.ok) return Toast.err(r.msg || 'Não foi possível aprovar.');
+  Toast.ok('Usado aprovado e adicionado ao estoque.'); Modal.close(); App.go('usados');
+};
+Modules.upRejeitar = function (id) {
+  const u = DB.get(UP.COLL, id); if (!u) return;
+  Modal.confirm('Rejeitar o usado <b>' + esc(u.nome) + '</b> (venda #' + (u.numeroVenda || (u.vendaId || '').slice(-4)) + ')?<br>Ele NÃO entrará no estoque. A venda e o financeiro não mudam.', () => {
+    UP.rejeitar(id, 'Rejeitado na conferência');
+    Toast.ok('Usado rejeitado (não entrou no estoque).'); Modal.close(); App.go('usados');
+  }, 'Rejeitar usado');
+};
+
+</script>
+  <script>
 /* ===== planejamento.js ===== */
 /* ============ RICO GAMES ERP — Planejamento de Compras (Fase 1) ============
    Tela de APOIO À DECISÃO (somente leitura). NÃO compra, NÃO altera preço nem
@@ -8514,6 +8741,7 @@ const App = {
     DB.load();
     this.migratePerms();
     try { if (typeof PV !== 'undefined' && PV.migrarLegado) PV.migrarLegado(); } catch (e) { console.error('Falha ao migrar pré-vendas antigas', e); }
+    try { if (typeof PV !== 'undefined' && PV.dedupMigradas) PV.dedupMigradas(); } catch (e) { console.error('Falha ao limpar pré-vendas duplicadas', e); }
     Theme.init();
     this.renderAuth();
     if (typeof Cloud !== 'undefined' && Cloud.configured()) {
