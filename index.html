@@ -683,7 +683,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 7.3 · pesquisa múltipla + relatório de estoque</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 7.4 · lista de estoque acumulada p/ relatório</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -1864,33 +1864,44 @@ const Modules = {
     return `
     <div class="page-head"><div><h1>Estoque</h1><p>${prods.length} produtos cadastrados · ${Calc.estoqueUnidades()} unidades${canFin ? ' · ' + Fmt.brl(Calc.estoqueValorCusto()) + ' em custo' : ''}</p></div>
       <div class="actions">${canEd ? '<button class="btn-ghost" onclick="Modules.ajusteEstoque()">⚖️ Ajuste</button><button class="btn-ghost" onclick="App.go(\'entrada\')">📥 Entrada de estoque</button><button class="btn-primary" onclick="Modules.produtoForm()">+ Novo produto</button>' : ''}</div></div>
-    ${(typeof Modules.estMultiPanelHtml === 'function') ? Modules.estMultiPanelHtml() : ''}
     <div class="toolbar">
-      <input class="grow" id="est-search" placeholder="Buscar nome, SKU ou código..." oninput="Modules.renderEstoqueTable()" />
+      <input class="grow" id="est-search" placeholder="Buscar nome, SKU ou código..." oninput="Modules.renderEstoqueTable()" onkeydown="if(event.key==='Enter'){event.preventDefault();Modules.estListaAdd();}" />
       <select id="est-cat" onchange="Modules.renderEstoqueTable()"><option value="">Todas categorias</option>${cats.map(c => `<option>${c}</option>`).join('')}</select>
       <select id="est-cond" onchange="Modules.renderEstoqueTable()"><option value="">Toda condição</option><option>novo</option><option>seminovo</option><option>usado</option></select>
       <select id="est-status" onchange="Modules.renderEstoqueTable()"><option value="">Todos os produtos</option><option value="baixo">Estoque baixo</option></select>
+      <button class="btn-ghost" onclick="Modules.estListaAdd()" title="Adicionar o resultado desta busca à lista para o relatório">➕ Adicionar à lista</button>
     </div>
+    <div id="est-listabar"></div>
     <div id="est-table"></div>`;
   },
   renderEstoqueTable() {
     const q = (fval('est-search') || '').toLowerCase();
     const cat = fval('est-cat'), cond = fval('est-cond'), st = fval('est-status');
-    let list = DB.all('produtos').filter(p => {
-      if (q && !(p.nome.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || (p.barcode || '').includes(q))) return false;
-      if (cat && p.categoria !== cat) return false;
-      if (cond && p.condicao !== cond) return false;
-      if (st === 'baixo' && p.qtd > p.min) return false;
-      return true;
-    });
+    // MODO LISTA: quando há produtos acumulados para o relatório, a tabela mostra essa lista
+    // (os produtos vão se acumulando conforme você pesquisa e adiciona). Senão, catálogo normal.
+    const modoLista = (typeof EstRel !== 'undefined') && EstRel.mode === 'lista' && EstRel.sel.length > 0;
+    let list;
+    if (modoLista) {
+      list = EstRel.selProds();
+    } else {
+      list = DB.all('produtos').filter(p => {
+        if (q && !(p.nome.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || (p.barcode || '').includes(q))) return false;
+        if (cat && p.categoria !== cat) return false;
+        if (cond && p.condicao !== cond) return false;
+        if (st === 'baixo' && p.qtd > p.min) return false;
+        return true;
+      });
+    }
     const canEd = App.can('podeEditarProduto'), canDel = App.can('podeExcluirProduto'), canFin = App.canFinance();
+    const temAcao = canEd || canDel || modoLista;
     const rows = list.map(p => {
       const disp = Modules.disp(p), res = p.reservado || 0;
       const dot = disp > 0 ? '🟢' : (res > 0 ? '🟡' : '🔴');
-      const selChk = (typeof EstRel !== 'undefined') ? `<td class="num" style="width:28px"><input type="checkbox" title="Adicionar à lista de consulta" ${EstRel.has(p.id) ? 'checked' : ''} onclick="event.stopPropagation();Modules.estSelToggle('${p.id}')"></td>` : '';
+      const acao = modoLista
+        ? `<button class="btn-icon" title="Tirar da lista" onclick="Modules.estListaRemove('${p.id}')">✕</button>`
+        : `${canEd ? `<button class="btn-icon" onclick="Modules.produtoForm('${p.id}')">✏️</button> ` : ''}${canDel ? `<button class="btn-icon" onclick="Modules.delProduto('${p.id}')">🗑️</button>` : ''}`;
       return `
       <tr>
-        ${selChk}
         <td><div class="strong prod-link" style="cursor:pointer;color:var(--accent,#5b8cff)" onclick="ProdHist.open('${p.id}')" title="Ver histórico do produto">${dot} ${esc(p.nome)} 🔎</div><div class="muted" style="font-size:11.5px">${p.sku}${p.serie ? ' · S/N ' + p.serie : ''}</div></td>
         <td>${p.categoria}<div class="muted" style="font-size:11px">${p.marca}</div></td>
         <td>${condBadge(p.condicao)}</td>
@@ -1901,15 +1912,15 @@ const Modules = {
         <td class="num strong">${Fmt.brl(p.preco)}</td>
         ${canFin ? `<td class="num"><span class="badge b-green">${Fmt.pct((p.preco - (p.custoMedio || p.custo)) / p.preco * 100)}</span></td>` : ''}
         <td>${p.local || '-'}</td>
-        ${(canEd || canDel) ? `<td class="num">${canEd ? `<button class="btn-icon" onclick="Modules.produtoForm('${p.id}')">✏️</button> ` : ''}${canDel ? `<button class="btn-icon" onclick="Modules.delProduto('${p.id}')">🗑️</button>` : ''}</td>` : ''}
+        ${temAcao ? `<td class="num">${acao}</td>` : ''}
       </tr>`;
     }).join('');
-    const chkTh = (typeof EstRel !== 'undefined') ? '<th style="width:28px" title="Selecionar para relatório">✓</th>' : '';
+    if (typeof Modules.estListaBar === 'function') { const bar = document.getElementById('est-listabar'); if (bar) bar.innerHTML = Modules.estListaBar(modoLista); }
+    const vazio = modoLista ? 'Lista vazia.' : 'Nenhum produto encontrado.';
     document.getElementById('est-table').innerHTML = `<div class="table-wrap"><table>
-      <thead><tr>${chkTh}<th>Produto</th><th>Categoria</th><th>Condição</th><th class="num">Estoque total</th><th class="num">Disponível</th><th class="num">Reservado</th>${canFin ? '<th class="num">Custo méd.</th>' : ''}<th class="num">Preço</th>${canFin ? '<th class="num">Margem</th>' : ''}<th>Local</th>${(canEd || canDel) ? '<th></th>' : ''}</tr></thead>
-      <tbody>${rows || '<tr><td colspan="13" class="muted" style="text-align:center;padding:30px">Nenhum produto encontrado.</td></tr>'}</tbody></table></div>
+      <thead><tr><th>Produto</th><th>Categoria</th><th>Condição</th><th class="num">Estoque total</th><th class="num">Disponível</th><th class="num">Reservado</th>${canFin ? '<th class="num">Custo méd.</th>' : ''}<th class="num">Preço</th>${canFin ? '<th class="num">Margem</th>' : ''}<th>Local</th>${temAcao ? '<th></th>' : ''}</tr></thead>
+      <tbody>${rows || '<tr><td colspan="12" class="muted" style="text-align:center;padding:30px">' + vazio + '</td></tr>'}</tbody></table></div>
       <div class="muted" style="font-size:12px;margin-top:8px">🟢 Disponível · 🟡 Reservado (pré-venda) · 🔴 Sem disponível. Disponível = Estoque total − Reservado.</div>`;
-    if (typeof EstRel !== 'undefined') { const c = document.getElementById('est-multi-count'); if (c) c.textContent = EstRel.sel.length + ' selecionado(s)'; if (EstRel.open && typeof this.estRenderSelecionados === 'function') this.estRenderSelecionados(); }
   },
   produtoForm(id) {
     const p = id ? DB.get('produtos', id) : {};
@@ -8135,132 +8146,41 @@ const EstRel = {
   }
 };
 
-/* ============ UI: painel colapsável dentro da aba Estoque ============ */
-Modules.estMultiPanelHtml = function () {
-  if (typeof EstRel === 'undefined') return '';
-  const open = EstRel.open;
-  return `<div class="card" style="margin-bottom:14px;border:1px solid var(--line)">
-    <div class="list-row" style="border:none;padding:2px 0;cursor:pointer" onclick="Modules.estMultiToggle()">
-      <div class="lr-ico">📋</div>
-      <div class="lr-main"><div class="lr-title">Pesquisa múltipla · Relatório para fornecedor</div>
-        <div class="lr-sub">Monte uma lista de produtos e gere um relatório de estoque — não altera o estoque real</div></div>
-      <span id="est-multi-count" class="badge b-blue">${EstRel.sel.length} selecionado(s)</span>
-      <span style="font-size:20px;color:var(--txt-3);margin-left:8px">${open ? '▾' : '▸'}</span>
-    </div>
-    <div id="est-multi-body" style="display:${open ? 'block' : 'none'};margin-top:12px">
-      <div class="form-grid" style="gap:14px">
-        <div><div class="section-title">A) Pesquisa individual</div>
-          <div class="ap-search" style="position:relative"><input id="est-mq" placeholder="🔎 Nome, SKU ou código de barras..." oninput="Modules.estMultiBusca()" onfocus="Modules.estMultiBusca()" onkeydown="if(event.key==='Enter'){event.preventDefault();Modules.estMultiAddPrimeiro();}" autocomplete="off"><div id="est-mq-drop" class="ap-drop"></div></div>
-          <button class="btn-ghost btn-sm" style="margin-top:8px" onclick="Modules.estMultiAddPrimeiro()">+ Adicionar à lista</button>
-        </div>
-        <div><div class="section-title">B) Pesquisa em lote <span class="muted" style="font-weight:500">· um produto por linha</span></div>
-          <textarea id="est-mlote" rows="4" placeholder="PlayStation 5 Slim\nControle DualSense Branco\nMario Kart" style="width:100%;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:var(--bg-2);color:var(--txt);font-size:13px;resize:vertical"></textarea>
-          <button class="btn-ghost btn-sm" style="margin-top:8px" onclick="Modules.estMultiLote()">🔎 Pesquisar lote e adicionar</button>
-        </div>
-      </div>
-      <div class="muted" style="font-size:11.5px;margin-top:6px">C) Ou marque os produtos direto na tabela abaixo (coluna ✓).</div>
-      <div id="est-naoenc" style="margin-top:10px"></div>
-      <div id="est-selecionados" style="margin-top:12px"></div>
-    </div>
+/* ============ UI mínima: acumular na própria tabela do Estoque ============ */
+Modules.estListaAdd = function () {
+  const termo = (fval("est-search") || "").trim(), q = termo.toLowerCase();
+  const cat = fval("est-cat"), cond = fval("est-cond"), st = fval("est-status");
+  if (!q && !cat && !cond && !st) { Toast.warn("Digite um produto na busca para adicionar à lista."); return; }
+  const matches = DB.all("produtos").filter(p => {
+    if (q && !((p.nome||"").toLowerCase().includes(q) || (p.sku||"").toLowerCase().includes(q) || (p.barcode||"").includes(q))) return false;
+    if (cat && p.categoria !== cat) return false;
+    if (cond && p.condicao !== cond) return false;
+    if (st === "baixo" && p.qtd > p.min) return false;
+    return true;
+  });
+  if (!matches.length) { if (termo) EstRel.naoEncontrados = [...new Set((EstRel.naoEncontrados||[]).concat([termo]))]; Toast.err("Nenhum produto encontrado para \"" + (termo||"filtro atual") + "\"."); return; }
+  let add = 0, dup = 0; matches.forEach(p => { if (EstRel.add(p.id)) add++; else dup++; });
+  EstRel.mode = "lista";
+  const s = document.getElementById("est-search"); if (s) s.value = "";
+  Toast.ok(add + " produto(s) adicionado(s) à lista" + (dup ? " · " + dup + " já estava(m)" : ""));
+  this.renderEstoqueTable();
+};
+Modules.estListaRemove = function (id) { EstRel.remove(id); if (!EstRel.sel.length) EstRel.mode = "catalogo"; this.renderEstoqueTable(); };
+Modules.estListaLimpar = function () { EstRel.clear(); EstRel.mode = "catalogo"; this.renderEstoqueTable(); };
+Modules.estListaToggle = function () { EstRel.mode = (EstRel.mode === "lista" ? "catalogo" : "lista"); this.renderEstoqueTable(); };
+Modules.estListaBar = function (modoLista) {
+  if (!EstRel.sel.length) return "";
+  const canFin = (typeof App === "undefined") || App.canFinance();
+  const T = EstRel.totais(EstRel.selProds());
+  return `<div class="card" style="margin:10px 0;padding:10px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;border:1px solid var(--accent,#5b8cff)">
+    <span style="font-weight:700">📋 Lista para relatório</span>
+    <span class="badge b-blue">${T.n} produto(s)</span>
+    <span class="muted" style="font-size:12.5px">${T.un} un${canFin ? " · " + Fmt.brl(T.valor) + " em custo" : ""}</span>
+    <span style="flex:1"></span>
+    <button class="btn-ghost btn-sm" onclick="Modules.estListaToggle()">${modoLista ? "Ver catálogo" : "Ver lista (" + T.n + ")"}</button>
+    <button class="btn-primary btn-sm" onclick="Modules.estReport()">🧾 Gerar relatório</button>
+    <button class="btn-ghost btn-sm" onclick="Modules.estListaLimpar()">🧹 Limpar</button>
   </div>`;
-};
-Modules.estMultiToggle = function () { EstRel.open = !EstRel.open; const b = document.getElementById('est-multi-body'); if (b) { b.style.display = EstRel.open ? 'block' : 'none'; if (EstRel.open) this.estRenderSelecionados(); } const h = document.querySelector('#est-multi-count'); };
-
-Modules.estMultiBusca = function () {
-  const q = (fval('est-mq') || '').toLowerCase(), drop = document.getElementById('est-mq-drop'); if (!drop) return;
-  if (!q) { drop.classList.remove('show'); drop.innerHTML = ''; return; }
-  const list = EstRel.match(q).slice(0, 12);
-  drop.innerHTML = list.length ? list.map(p => `<div class="ms-opt" onmousedown="event.preventDefault();Modules.estMultiAdd('${p.id}')"><span>${esc(p.nome)}${EstRel.has(p.id) ? ' <span class="badge b-green" style="font-size:10px">na lista</span>' : ''}</span><span class="o-sku">${esc(p.sku || '')} · ${p.qtd || 0} un</span></div>`).join('') : '<div class="ms-empty">Nenhum produto encontrado.</div>';
-  drop.classList.add('show');
-};
-Modules.estMultiAdd = function (id) {
-  const p = DB.get('produtos', id); if (!p) return;
-  if (!EstRel.add(id)) { Toast.warn('"' + p.nome + '" já está na lista.'); }
-  else Toast.ok('Adicionado: ' + p.nome);
-  const d = document.getElementById('est-mq-drop'); if (d) { d.classList.remove('show'); d.innerHTML = ''; }
-  const q = document.getElementById('est-mq'); if (q) q.value = '';
-  this.estSyncUI();
-};
-Modules.estMultiAddPrimeiro = function () {
-  const q = fval('est-mq'); if (!q) return Toast.warn('Digite um produto para buscar.');
-  const best = EstRel.bestMatch(q);
-  if (!best) { EstRel.naoEncontrados = [...new Set(EstRel.naoEncontrados.concat([q]))]; Toast.err('Nenhum produto encontrado para "' + q + '".'); this.estSyncUI(); return; }
-  this.estMultiAdd(best.id);
-};
-Modules.estMultiLote = function () {
-  const txt = (document.getElementById('est-mlote') || {}).value || '';
-  const linhas = txt.split(/[\n;]+/).map(s => s.trim()).filter(Boolean);
-  if (!linhas.length) return Toast.warn('Cole ao menos um produto (um por linha).');
-  let add = 0, dup = 0; const naoEnc = [];
-  linhas.forEach(t => { const p = EstRel.bestMatch(t); if (!p) naoEnc.push(t); else { if (EstRel.add(p.id)) add++; else dup++; } });
-  EstRel.naoEncontrados = [...new Set(EstRel.naoEncontrados.concat(naoEnc))];
-  const m = document.getElementById('est-mlote'); if (m) m.value = '';
-  Toast.ok(add + ' adicionado(s)' + (dup ? ' · ' + dup + ' já estavam' : '') + (naoEnc.length ? ' · ' + naoEnc.length + ' não encontrado(s)' : ''));
-  this.estSyncUI();
-};
-/* chamado pela tabela do estoque (checkbox da coluna ✓) */
-Modules.estSelToggle = function (id) {
-  if (EstRel.has(id)) EstRel.remove(id); else EstRel.add(id);
-  this.estSyncUI();
-};
-Modules.estSelRemove = function (id) { EstRel.remove(id); this.estSyncUI(); };
-Modules.estSelClear = function () { if (!EstRel.sel.length) return; EstRel.clear(); this.estSyncUI(); };
-Modules.estMultiNaoEncLimpar = function () { EstRel.naoEncontrados = []; this.estSyncUI(); };
-Modules.estMultiFiltro = function (campo, val) { EstRel.f[campo] = val; this.estRenderSelecionados(); };
-Modules.estMultiSort = function (k) { if (EstRel.sort === k) EstRel.dir = -EstRel.dir; else { EstRel.sort = k; EstRel.dir = 1; } this.estRenderSelecionados(); };
-
-/* re-renderiza painel + tabela (para os checkboxes refletirem a seleção) */
-Modules.estSyncUI = function () {
-  const c = document.getElementById('est-multi-count'); if (c) c.textContent = EstRel.sel.length + ' selecionado(s)';
-  this.estRenderSelecionados();
-  if (typeof this.renderEstoqueTable === 'function' && document.getElementById('est-table')) this.renderEstoqueTable();
-};
-
-Modules.estRenderSelecionados = function () {
-  const host = document.getElementById('est-selecionados'); if (!host) return;
-  const naoEl = document.getElementById('est-naoenc');
-  if (naoEl) naoEl.innerHTML = EstRel.naoEncontrados.length
-    ? `<div class="alert-card" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3)"><div class="a-ico">⚠️</div><div><div class="a-lbl"><b>${EstRel.naoEncontrados.length} não encontrado(s):</b> ${EstRel.naoEncontrados.map(esc).join(', ')}</div><div class="muted" style="font-size:11px">Corrija o nome e tente de novo. <a style="color:var(--accent);cursor:pointer" onclick="Modules.estMultiNaoEncLimpar()">limpar aviso</a></div></div></div>`
-    : '';
-  const canFin = (typeof App === 'undefined') || App.canFinance();
-  const list = EstRel.filtrados(), T = EstRel.totais(list);
-  if (!EstRel.sel.length) { host.innerHTML = '<div class="empty-state" style="padding:20px"><div class="big">📋</div>Nenhum produto selecionado. Use as buscas acima ou a coluna ✓ na tabela.</div>'; return; }
-  const cats = EstRel.catList(), forns = EstRel.fornList();
-  const arrow = k => EstRel.sort === k ? (EstRel.dir > 0 ? ' ▲' : ' ▼') : '';
-  const th = (k, lbl, cls) => `<th class="${cls || ''}" style="cursor:pointer;white-space:nowrap" onclick="Modules.estMultiSort('${k}')">${lbl}${arrow(k)}</th>`;
-  const filtros = `<div class="toolbar" style="flex-wrap:wrap;gap:8px;margin:8px 0">
-    <select onchange="Modules.estMultiFiltro('cat',this.value)"><option value="">Todas categorias</option>${cats.map(c => `<option ${EstRel.f.cat === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
-    ${forns.length ? `<select onchange="Modules.estMultiFiltro('forn',this.value)"><option value="">Todos fornecedores</option>${forns.map(f => `<option ${EstRel.f.forn === f ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select>` : ''}
-    <select onchange="Modules.estMultiFiltro('estoque',this.value)"><option value="">Com e sem estoque</option><option value="com" ${EstRel.f.estoque === 'com' ? 'selected' : ''}>Com estoque</option><option value="sem" ${EstRel.f.estoque === 'sem' ? 'selected' : ''}>Sem estoque</option></select>
-    <input type="number" placeholder="qtd mín" value="${EstRel.f.qMin}" oninput="Modules.estMultiFiltro('qMin',this.value)" style="width:90px">
-    <input type="number" placeholder="qtd máx" value="${EstRel.f.qMax}" oninput="Modules.estMultiFiltro('qMax',this.value)" style="width:90px">
-  </div>`;
-  const rows = list.map(p => `<tr>
-    <td class="strong">${esc(p.nome)}</td>
-    <td class="muted">${esc(p.sku || '—')}</td>
-    <td>${esc(p.categoria || '—')}</td>
-    <td class="num strong">${p.qtd || 0}</td>
-    <td class="num">${EstRel.dispOf(p)}</td>
-    ${canFin ? `<td class="num">${Fmt.brl(EstRel.custoOf(p))}</td>` : ''}
-    ${canFin ? `<td class="num strong">${Fmt.brl(EstRel.valorOf(p))}</td>` : ''}
-    <td>${esc(EstRel.fornOf(p) || '—')}</td>
-    <td class="muted">${EstRel.ultimaMov(p) ? Fmt.date(EstRel.ultimaMov(p)) : '—'}</td>
-    <td class="num"><button class="btn-icon" title="Remover da lista" onclick="Modules.estSelRemove('${p.id}')">✕</button></td>
-  </tr>`).join('');
-  host.innerHTML = `
-    <div class="grid kpis" style="margin-bottom:6px">
-      ${kpi('Produtos selecionados', Fmt.num(T.n), 'itens diferentes', '📦', 'blue')}
-      ${kpi('Unidades em estoque', Fmt.num(T.un), 'soma das quantidades', '🔢', '')}
-      ${canFin ? kpi('Valor total em estoque', Fmt.brl(T.valor), 'custo × quantidade', '💰', 'green') : ''}
-    </div>
-    ${filtros}
-    <div class="table-wrap"><table>
-      <thead><tr>${th('nome', 'Produto')}<th>SKU</th>${th('categoria', 'Categoria')}${th('qtd', 'Estoque', 'num')}${th('disp', 'Disponível', 'num')}${canFin ? '<th class="num">Custo un.</th>' : ''}${canFin ? th('valor', 'Valor total', 'num') : ''}<th>Fornecedor</th><th>Últ. mov.</th><th></th></tr></thead>
-      <tbody>${rows || `<tr><td colspan="10" class="muted" style="text-align:center;padding:20px">Nenhum produto no filtro atual.</td></tr>`}</tbody></table></div>
-    <div class="actions" style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn-primary" onclick="Modules.estReport()">🧾 Gerar relatório de estoque</button>
-      <button class="btn-ghost" onclick="Modules.estSelClear()">🧹 Limpar seleção</button>
-    </div>`;
 };
 
 /* ============ Relatório para fornecedor + exportações ============ */
