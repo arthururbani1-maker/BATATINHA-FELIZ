@@ -683,7 +683,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 7.6 · relatório comercial com preço editável</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 7.7 · relatório com qtd e preço editáveis</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -8054,6 +8054,7 @@ const EstRel = {
   sel: [],            // ids de produtos selecionados (consulta) — persiste entre buscas
   naoEncontrados: [], // termos do lote que não casaram
   precoRel: {},       // preço de venda TEMPORÁRIO do relatório (id → preço). NÃO altera o cadastro.
+  qtdRel: {},         // quantidade TEMPORÁRIA do relatório (id → qtd). NÃO altera o estoque real.
   f: { cat: '', forn: '', estoque: '', qMin: '', qMax: '' },
   sort: 'nome', dir: 1,
   open: false,
@@ -8062,11 +8063,12 @@ const EstRel = {
   selProds() { return this.sel.map(id => this.prod(id)).filter(Boolean); },
   has(id) { return this.sel.indexOf(id) >= 0; },
   add(id) { if (!id || this.has(id)) return false; this.sel.push(id); return true; },
-  remove(id) { this.sel = this.sel.filter(x => x !== id); delete this.precoRel[id]; },
-  clear() { this.sel = []; this.naoEncontrados = []; this.precoRel = {}; },
+  remove(id) { this.sel = this.sel.filter(x => x !== id); delete this.precoRel[id]; delete this.qtdRel[id]; },
+  clear() { this.sel = []; this.naoEncontrados = []; this.precoRel = {}; this.qtdRel = {}; },
 
-  /* quantidade em estoque (atual) e preço de venda — do relatório (editável) ou do cadastro */
-  qtdDe(p) { return p.qtd || 0; },
+  /* quantidade e preço — do relatório (editável, temporário) ou do cadastro/estoque atual */
+  qtdDe(p) { const v = this.qtdRel[p.id]; return (v != null && !isNaN(v)) ? v : (p.qtd || 0); },
+  setQtd(id, val) { const n = parseInt(String(val == null ? '' : val).replace(/[^\d-]/g, ''), 10); if (isNaN(n) || n < 0) delete this.qtdRel[id]; else this.qtdRel[id] = n; },
   precoDe(p) { const v = this.precoRel[p.id]; return (v != null && !isNaN(v)) ? v : (p.preco || 0); },
   setPreco(id, val) { const n = parseFloat(String(val == null ? '' : val).replace(/\./g, '').replace(',', '.')); if (isNaN(n) || n < 0) delete this.precoRel[id]; else this.precoRel[id] = Math.round(n * 100) / 100; },
 
@@ -8133,7 +8135,7 @@ const EstRel = {
   },
   totais(list) {
     const l = list || this.filtrados();
-    return { n: l.length, un: l.reduce((s, p) => s + (p.qtd || 0), 0), valor: l.reduce((s, p) => s + this.valorOf(p), 0) };
+    return { n: l.length, un: l.reduce((s, p) => s + this.qtdDe(p), 0), valor: l.reduce((s, p) => s + this.valorOf(p), 0) };
   }
 };
 
@@ -8232,14 +8234,14 @@ Modules.estReport = function () {
   const body = list.map(p => `<tr>
       <td class="strong">${esc(p.nome)}</td>
       <td class="muted">${esc(p.sku || '—')}</td>
-      <td class="num strong">${EstRel.qtdDe(p)}</td>
+      <td class="num"><input type="number" min="0" step="1" value="${EstRel.qtdDe(p)}" onchange="Modules.estReportSetQtd('${p.id}', this.value)" style="width:80px;text-align:right;padding:6px 8px;border-radius:7px;border:1px solid var(--line);background:var(--bg-2);color:var(--txt);font-weight:700"></td>
       <td class="num"><input type="text" inputmode="decimal" value="${String(EstRel.precoDe(p).toFixed(2)).replace('.', ',')}" onchange="Modules.estReportSetPreco('${p.id}', this.value)" style="width:110px;text-align:right;padding:6px 8px;border-radius:7px;border:1px solid var(--line);background:var(--bg-2);color:var(--txt);font-weight:700"></td>
     </tr>`).join('');
   Modal.open({
     title: '🧾 Relatório de estoque — prévia', wide: true,
     body: `<div style="margin-bottom:10px"><b>${esc(loja)}</b> · Relatório de estoque<div class="muted" style="font-size:12px">Gerado em ${Fmt.datetime(hoje)} · ${T.n} produto(s) · ${T.un} unidade(s)</div></div>
       <div class="table-wrap"><table><thead><tr><th>Produto</th><th>SKU</th><th class="num">Quantidade</th><th class="num">Preço de venda</th></tr></thead><tbody>${body}</tbody></table></div>
-      <div class="muted" style="font-size:11.5px;margin-top:8px">💡 O preço de venda pode ser alterado aqui — vale só para este relatório e <b>não muda o preço cadastrado</b> no estoque.</div>`,
+      <div class="muted" style="font-size:11.5px;margin-top:8px">💡 Quantidade e preço de venda podem ser alterados aqui — valem só para este relatório e <b>não mudam o estoque nem o preço cadastrados</b>.</div>`,
     foot: `<button class="btn-ghost" style="margin-right:auto" onclick="Modules.estReportBuilder()">← Voltar à seleção</button>
       <button class="btn-ghost" onclick="Modules.estExport('csv')">⬇️ CSV</button>
       <button class="btn-ghost" onclick="Modules.estExport('xlsx')">⬇️ Excel</button>
@@ -8249,6 +8251,7 @@ Modules.estReport = function () {
   });
 };
 Modules.estReportSetPreco = function (id, val) { EstRel.setPreco(id, val); };
+Modules.estReportSetQtd = function (id, val) { EstRel.setQtd(id, val); };
 Modules.estReportAoa = function () {
   const list = EstRel.filtrados();
   const aoa = [['Rico Games — Relatório de estoque'], ['Gerado em', Fmt.datetime(new Date())], [], ['Produto', 'SKU', 'Quantidade', 'Preço de venda']];
