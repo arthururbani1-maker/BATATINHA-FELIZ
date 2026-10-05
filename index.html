@@ -683,7 +683,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 7.5 · relatório de estoque com seleção manual</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 7.6 · relatório comercial com preço editável</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -8053,6 +8053,7 @@ Modules.upRejeitar = function (id) {
 const EstRel = {
   sel: [],            // ids de produtos selecionados (consulta) — persiste entre buscas
   naoEncontrados: [], // termos do lote que não casaram
+  precoRel: {},       // preço de venda TEMPORÁRIO do relatório (id → preço). NÃO altera o cadastro.
   f: { cat: '', forn: '', estoque: '', qMin: '', qMax: '' },
   sort: 'nome', dir: 1,
   open: false,
@@ -8061,8 +8062,13 @@ const EstRel = {
   selProds() { return this.sel.map(id => this.prod(id)).filter(Boolean); },
   has(id) { return this.sel.indexOf(id) >= 0; },
   add(id) { if (!id || this.has(id)) return false; this.sel.push(id); return true; },
-  remove(id) { this.sel = this.sel.filter(x => x !== id); },
-  clear() { this.sel = []; this.naoEncontrados = []; },
+  remove(id) { this.sel = this.sel.filter(x => x !== id); delete this.precoRel[id]; },
+  clear() { this.sel = []; this.naoEncontrados = []; this.precoRel = {}; },
+
+  /* quantidade em estoque (atual) e preço de venda — do relatório (editável) ou do cadastro */
+  qtdDe(p) { return p.qtd || 0; },
+  precoDe(p) { const v = this.precoRel[p.id]; return (v != null && !isNaN(v)) ? v : (p.preco || 0); },
+  setPreco(id, val) { const n = parseFloat(String(val == null ? '' : val).replace(/\./g, '').replace(',', '.')); if (isNaN(n) || n < 0) delete this.precoRel[id]; else this.precoRel[id] = Math.round(n * 100) / 100; },
 
   fornOf(p) { return p.fornecedor || ((p.entradas && p.entradas[0] && p.entradas[0].fornecedor) || '') || ''; },
   fornList() { return [...new Set(this.selProds().map(p => this.fornOf(p)).filter(Boolean))].sort(); },
@@ -8206,7 +8212,7 @@ Modules.estReportRenderSel = function () {
     <td class="num strong">${p.qtd || 0}</td>
     <td class="num"><button class="btn-icon" title="Remover da seleção (não mexe no estoque)" onclick="Modules.estReportRemove('${p.id}')">✕</button></td>
   </tr>`).join('');
-  host.innerHTML = `<div class="section-title">Produtos selecionados (${T.n}) <span class="muted" style="font-weight:500">· ${T.un} unidade(s) em estoque${canFin ? ' · ' + Fmt.brl(T.valor) + ' em custo' : ''}</span></div>
+  host.innerHTML = `<div class="section-title">Produtos selecionados (${T.n}) <span class="muted" style="font-weight:500">· ${T.un} unidade(s) em estoque</span></div>
     <div class="table-wrap"><table><thead><tr><th>Produto</th><th>Categoria</th><th class="num">Estoque</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
 };
 Modules.estReportConfirmar = function () {
@@ -8215,33 +8221,40 @@ Modules.estReportConfirmar = function () {
   this.estReport();
 };
 
-/* ============ Relatório para fornecedor + exportações ============ */
+/* ============ Relatório (lista comercial): Produto · SKU · Quantidade · Preço de venda ============
+   Preço de venda é EDITÁVEL só no relatório (EstRel.precoRel) e NÃO altera o cadastro do produto.
+   Não mostra custo, margem, lucro nem valor total. */
 Modules.estReport = function () {
   const list = EstRel.filtrados();
   if (!list.length) return Toast.warn('Selecione ao menos um produto para o relatório.');
-  const canFin = (typeof App === 'undefined') || App.canFinance();
   const T = EstRel.totais(list), hoje = new Date();
   const loja = ((DB.all('config')[0] || {}).loja) || 'Rico Games';
-  const head = `<tr><th>Produto</th><th>SKU</th><th class="num">Qtd disp.</th><th>Categoria</th><th>Fornecedor</th>${canFin ? '<th class="num">Custo un.</th><th class="num">Valor total</th>' : ''}</tr>`;
-  const body = list.map(p => `<tr><td>${esc(p.nome)}</td><td>${esc(p.sku || '—')}</td><td class="num">${EstRel.dispOf(p)}</td><td>${esc(p.categoria || '—')}</td><td>${esc(EstRel.fornOf(p) || '—')}</td>${canFin ? `<td class="num">${Fmt.brl(EstRel.custoOf(p))}</td><td class="num">${Fmt.brl(EstRel.valorOf(p))}</td>` : ''}</tr>`).join('');
-  const foot = canFin ? `<tr style="font-weight:700;border-top:2px solid var(--line)"><td colspan="2">TOTAL</td><td class="num">${list.reduce((s, p) => s + EstRel.dispOf(p), 0)}</td><td colspan="2"></td><td></td><td class="num">${Fmt.brl(T.valor)}</td></tr>` : `<tr style="font-weight:700;border-top:2px solid var(--line)"><td colspan="2">TOTAL</td><td class="num">${list.reduce((s, p) => s + EstRel.dispOf(p), 0)}</td><td colspan="2"></td></tr>`;
+  const body = list.map(p => `<tr>
+      <td class="strong">${esc(p.nome)}</td>
+      <td class="muted">${esc(p.sku || '—')}</td>
+      <td class="num strong">${EstRel.qtdDe(p)}</td>
+      <td class="num"><input type="text" inputmode="decimal" value="${String(EstRel.precoDe(p).toFixed(2)).replace('.', ',')}" onchange="Modules.estReportSetPreco('${p.id}', this.value)" style="width:110px;text-align:right;padding:6px 8px;border-radius:7px;border:1px solid var(--line);background:var(--bg-2);color:var(--txt);font-weight:700"></td>
+    </tr>`).join('');
   Modal.open({
     title: '🧾 Relatório de estoque — prévia', wide: true,
-    body: `<div style="margin-bottom:10px"><b>${esc(loja)}</b> · Relatório de estoque<div class="muted" style="font-size:12px">Gerado em ${Fmt.datetime(hoje)} · ${T.n} produto(s) · ${T.un} unidade(s)${canFin ? ' · ' + Fmt.brl(T.valor) + ' em custo' : ''}</div></div>
-      <div class="table-wrap"><table><thead>${head}</thead><tbody>${body}</tbody><tfoot>${foot}</tfoot></table></div>`,
-    foot: `<button class="btn-ghost" onclick="Modules.estExport('csv')">⬇️ CSV</button>
+    body: `<div style="margin-bottom:10px"><b>${esc(loja)}</b> · Relatório de estoque<div class="muted" style="font-size:12px">Gerado em ${Fmt.datetime(hoje)} · ${T.n} produto(s) · ${T.un} unidade(s)</div></div>
+      <div class="table-wrap"><table><thead><tr><th>Produto</th><th>SKU</th><th class="num">Quantidade</th><th class="num">Preço de venda</th></tr></thead><tbody>${body}</tbody></table></div>
+      <div class="muted" style="font-size:11.5px;margin-top:8px">💡 O preço de venda pode ser alterado aqui — vale só para este relatório e <b>não muda o preço cadastrado</b> no estoque.</div>`,
+    foot: `<button class="btn-ghost" style="margin-right:auto" onclick="Modules.estReportBuilder()">← Voltar à seleção</button>
+      <button class="btn-ghost" onclick="Modules.estExport('csv')">⬇️ CSV</button>
       <button class="btn-ghost" onclick="Modules.estExport('xlsx')">⬇️ Excel</button>
       <button class="btn-ghost" onclick="Modules.estExport('pdf')">🧾 PDF</button>
       <button class="btn-ghost" onclick="Modules.estExport('print')">🖨️ Imprimir</button>
       <button class="btn-primary" onclick="Modal.close()">Fechar</button>`
   });
 };
+Modules.estReportSetPreco = function (id, val) { EstRel.setPreco(id, val); };
 Modules.estReportAoa = function () {
-  const list = EstRel.filtrados(), canFin = (typeof App === 'undefined') || App.canFinance();
-  const head = ['Produto', 'SKU', 'Qtd disponível', 'Categoria', 'Fornecedor'].concat(canFin ? ['Custo unit.', 'Valor total'] : []);
-  const aoa = [['Rico Games — Relatório de estoque'], ['Gerado em', Fmt.datetime(new Date())], [], head];
-  list.forEach(p => aoa.push([p.nome, p.sku || '', EstRel.dispOf(p), p.categoria || '', EstRel.fornOf(p) || ''].concat(canFin ? [+EstRel.custoOf(p).toFixed(2), +EstRel.valorOf(p).toFixed(2)] : [])));
-  if (canFin) { const T = EstRel.totais(list); aoa.push([]); aoa.push(['TOTAL', '', list.reduce((s, p) => s + EstRel.dispOf(p), 0), '', '', '', +T.valor.toFixed(2)]); }
+  const list = EstRel.filtrados();
+  const aoa = [['Rico Games — Relatório de estoque'], ['Gerado em', Fmt.datetime(new Date())], [], ['Produto', 'SKU', 'Quantidade', 'Preço de venda']];
+  list.forEach(p => aoa.push([p.nome, p.sku || '', EstRel.qtdDe(p), +EstRel.precoDe(p).toFixed(2)]));
+  const un = list.reduce((s, p) => s + EstRel.qtdDe(p), 0);
+  aoa.push([]); aoa.push(['TOTAL', '', un, '']);
   return aoa;
 };
 Modules.estExport = function (tipo) {
@@ -8250,10 +8263,8 @@ Modules.estExport = function (tipo) {
   if (tipo === 'xlsx') { if (typeof Exporter !== 'undefined' && Exporter.xlsx) Exporter.xlsx(nome + '.xlsx', 'Estoque', this.estReportAoa()); return; }
   if (tipo === 'csv') { this.estExportCsv(nome + '.csv', this.estReportAoa()); return; }
   // pdf / print — mesma janela de impressão (o usuário escolhe "Salvar como PDF" ou imprimir)
-  const canFin = (typeof App === 'undefined') || App.canFinance();
-  const th = this.estReportAoa()[3].map(h => `<th>${esc(h)}</th>`).join('');
-  const rows = list.map(p => `<tr><td>${esc(p.nome)}</td><td>${esc(p.sku || '')}</td><td class="num">${EstRel.dispOf(p)}</td><td>${esc(p.categoria || '')}</td><td>${esc(EstRel.fornOf(p) || '')}</td>${canFin ? `<td class="num">${Fmt.brl(EstRel.custoOf(p))}</td><td class="num">${Fmt.brl(EstRel.valorOf(p))}</td>` : ''}</tr>`).join('');
-  if (typeof Exporter !== 'undefined' && Exporter.pdf) Exporter.pdf('Relatório de estoque · ' + Fmt.date(new Date()), `<table><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table>`);
+  const rows = list.map(p => `<tr><td>${esc(p.nome)}</td><td>${esc(p.sku || '')}</td><td class="num">${EstRel.qtdDe(p)}</td><td class="num">${Fmt.brl(EstRel.precoDe(p))}</td></tr>`).join('');
+  if (typeof Exporter !== 'undefined' && Exporter.pdf) Exporter.pdf('Relatório de estoque · ' + Fmt.date(new Date()), `<table><thead><tr><th>Produto</th><th>SKU</th><th class="num">Quantidade</th><th class="num">Preço de venda</th></tr></thead><tbody>${rows}</tbody></table>`);
 };
 Modules.estExportCsv = function (filename, aoa) {
   const esc2 = v => { const s = String(v == null ? '' : v); return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
