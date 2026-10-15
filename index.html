@@ -683,7 +683,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 7.8 · usado entra no estoque automático (configurável)</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 8.0 · rentabilidade histórica por forma de pagamento</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -6321,6 +6321,7 @@ const BI = {
     if (periodo === '7d') return dback(7);
     if (periodo === '15d') return dback(15);
     if (periodo === '30d') return dback(30);
+    if (periodo === '90d') return dback(90);
     if (periodo === '3m') { const s = new Date(now); s.setMonth(s.getMonth() - 3); return { start: s0(s), end: e0(now) }; }
     if (periodo === '6m') { const s = new Date(now); s.setMonth(s.getMonth() - 6); return { start: s0(s), end: e0(now) }; }
     if (periodo === '12m') { const s = new Date(now); s.setMonth(s.getMonth() - 12); return { start: s0(s), end: e0(now) }; }
@@ -6332,7 +6333,7 @@ const BI = {
     return { start: new Date(0), end: e0(now) };
   },
   periodoLabel(periodo, r) {
-    const nomes = { hoje: 'Hoje', ontem: 'Ontem', '7d': 'Últimos 7 dias', '15d': 'Últimos 15 dias', '30d': 'Últimos 30 dias', '3m': 'Últimos 3 meses', '6m': 'Últimos 6 meses', '12m': 'Últimos 12 meses', mes: 'Mês atual', mesAnterior: 'Mês anterior', ano: 'Ano atual', anoAnterior: 'Ano anterior', custom: 'Período personalizado', all: 'Todo o período' };
+    const nomes = { hoje: 'Hoje', ontem: 'Ontem', '7d': 'Últimos 7 dias', '15d': 'Últimos 15 dias', '30d': 'Últimos 30 dias', '90d': 'Últimos 90 dias', '3m': 'Últimos 3 meses', '6m': 'Últimos 6 meses', '12m': 'Últimos 12 meses', mes: 'Mês atual', mesAnterior: 'Mês anterior', ano: 'Ano atual', anoAnterior: 'Ano anterior', custom: 'Período personalizado', all: 'Todo o período' };
     const nome = nomes[periodo] || periodo;
     if (periodo === 'mes' || periodo === 'mesAnterior') { const m = r.start.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }); return m.charAt(0).toUpperCase() + m.slice(1); }
     if (periodo === 'ano' || periodo === 'anoAnterior') return String(r.start.getFullYear());
@@ -7545,7 +7546,7 @@ Modules.simExport = function (fmt) {
 
 Modules.apState = { sku: '', periodo: '30d', de: '', ate: '' };
 
-Modules.apPeriodos = [['hoje', 'Hoje'], ['ontem', 'Ontem'], ['7d', 'Últimos 7 dias'], ['30d', 'Últimos 30 dias'], ['mes', 'Este mês'], ['mesAnterior', 'Mês passado'], ['6m', 'Últimos 6 meses'], ['12m', 'Último ano'], ['custom', 'Período personalizado']];
+Modules.apPeriodos = [['hoje', 'Hoje'], ['ontem', 'Ontem'], ['7d', 'Últimos 7 dias'], ['30d', 'Últimos 30 dias'], ['90d', 'Últimos 90 dias'], ['mes', 'Este mês'], ['mesAnterior', 'Mês passado'], ['6m', 'Últimos 6 meses'], ['12m', 'Último ano'], ['custom', 'Período personalizado']];
 
 /* ---------- cálculo ---------- */
 Modules.apCompute = function (sku, r) {
@@ -7753,8 +7754,62 @@ Modules.apExport = function (fmt) {
 };
 
 /* ============ Análise de Produtos (comparação multi-produto) ============ */
-Modules.mpState = { skus: [], periodo: '30d', de: '', ate: '', sort: 'liq', dir: -1 };
-Modules.mpSetPeriodo = function (v) { this.mpState.periodo = v; this.biRender(); };
+Modules.mpState = { skus: [], periodo: '30d', de: '', ate: '', sort: 'liq', dir: -1, metric: 'qtd', cmpSort: 'cresc', cmpDe: '', cmpAte: '' };
+Modules.mpSetPeriodo = function (v) { this.mpState.periodo = v; this.mpState.cmpDe = ''; this.mpState.cmpAte = ''; this.biRender(); };
+Modules.mpSetMetric = function (v) { this.mpState.metric = v; this.biRender(); };
+Modules.mpSetCmpSort = function (v) { this.mpState.cmpSort = v; this.biRender(); };
+/* período de comparação: manual (se o usuário editou) ou o anterior equivalente automático.
+   - "este mês", "mês passado" e "personalizado" → MESMOS DIAS do mês anterior (01–13/10 vs 01–13/09)
+   - "últimos 7/30/90 dias" e demais janelas → igual duração imediatamente anterior */
+Modules.mpCmpRange = function (r) {
+  const S = this.mpState;
+  if (S.cmpDe && S.cmpAte) return BI.range('custom', S.cmpDe, S.cmpAte);
+  const porMesAnterior = (S.periodo === 'mes' || S.periodo === 'mesAnterior' || S.periodo === 'custom');
+  if (porMesAnterior) {
+    const dim = (y, m) => new Date(y, m + 1, 0).getDate(); // dias no mês (m: 0-11)
+    const shift = (d, boundary) => {
+      const y = d.getFullYear(), m = d.getMonth(), day = Math.min(d.getDate(), dim(y, m - 1));
+      const x = new Date(y, m - 1, day);
+      if (boundary === 'start') x.setHours(0, 0, 0, 0); else x.setHours(23, 59, 59, 999);
+      return x;
+    };
+    return { start: shift(r.start, 'start'), end: shift(r.end, 'end') };
+  }
+  return BI.prevRange(r, S.periodo);
+};
+/* variação segura entre dois valores (trata base zero e margem em pontos percentuais) */
+Modules.mpVar = function (cur, prev, isPP) {
+  const diff = cur - prev;
+  if (isPP) { const d = diff; return { diff: d, dir: d > 0.05 ? 'up' : (d < -0.05 ? 'down' : 'flat'), txt: (d >= 0 ? '+' : '') + d.toFixed(1).replace('.', ',') + ' p.p.', base: true }; }
+  if (Math.abs(prev) < 1e-9) {
+    if (Math.abs(cur) < 1e-9) return { diff: 0, dir: 'flat', txt: 'Estável', base: false };
+    return { diff, dir: 'up', txt: 'Novo resultado', base: false };
+  }
+  const pct = diff / prev * 100;
+  return { diff, pct, dir: diff > 0.0001 ? 'up' : (diff < -0.0001 ? 'down' : 'flat'), txt: (pct >= 0 ? '+' : '') + pct.toFixed(1).replace('.', ',') + '%', base: true };
+};
+Modules.mpMetricVal = function (T, metric) { return metric === 'receita' ? (T.receita || 0) : metric === 'bruto' ? (T.bruto || 0) : metric === 'margemV' ? (T.margemV || 0) : (T.qtd || 0); };
+Modules.mpMetricFmt = function (metric, val) { return metric === 'qtd' ? (Math.round(val) + ' un') : metric === 'margemV' ? Fmt.pct(val) : Fmt.brl(val); };
+Modules.mpMetricLabel = function (metric) { return metric === 'receita' ? 'Faturamento' : metric === 'bruto' ? 'Lucro bruto' : metric === 'margemV' ? 'Margem' : 'Unidades vendidas'; };
+/* gráfico de barras agrupadas: período atual vs anterior por produto */
+Modules.mpBarsCmp = function (labels, cur, prev) {
+  if (!labels.length) return '';
+  const w = 660, h = 210, pl = 40, pr = 12, pt = 14, pb = 40, iw = w - pl - pr, ih = h - pt - pb;
+  const max = Math.max(1, ...cur, ...prev);
+  const g = labels.length, slot = iw / g, bw = Math.min(26, slot * 0.34);
+  const kf = v => { const a = Math.abs(v); return a >= 1000 ? (v / 1000).toFixed(1).replace('.', ',') + 'k' : Math.round(v); };
+  const yb = (val) => { const bh = val / max * ih; return { y: (pt + ih - bh).toFixed(1), h: Math.max(0, bh).toFixed(1) }; };
+  let bars = '';
+  labels.forEach((l, i) => {
+    const cx = pl + i * slot + slot / 2;
+    const a = yb(cur[i]); bars += `<rect x="${(cx - bw - 2).toFixed(1)}" y="${a.y}" width="${bw}" height="${a.h}" rx="2" fill="#5b8cff"><title>Atual: ${kf(cur[i])}</title></rect>`;
+    const b = yb(prev[i]); bars += `<rect x="${(cx + 2).toFixed(1)}" y="${b.y}" width="${bw}" height="${b.h}" rx="2" fill="#94a3b8"><title>Anterior: ${kf(prev[i])}</title></rect>`;
+    bars += `<text x="${cx.toFixed(1)}" y="${h - 24}" font-size="9.5" fill="var(--txt-3)" text-anchor="middle">${esc(l.length > 12 ? l.slice(0, 11) + '…' : l)}</text>`;
+  });
+  const base = `<line x1="${pl}" y1="${pt + ih}" x2="${w - pr}" y2="${pt + ih}" stroke="var(--border)"/>`;
+  const leg = `<div class="ap-legs" style="margin-top:4px"><span class="ap-leg"><span style="background:#5b8cff"></span>Período atual</span><span class="ap-leg"><span style="background:#94a3b8"></span>Período anterior</span></div>`;
+  return `<div class="ap-chart"><svg viewBox="0 0 ${w} ${h}" width="100%" xmlns="http://www.w3.org/2000/svg">${base}${bars}</svg>${leg}</div>`;
+};
 Modules.mpBusca = function () {
   const q = (fval('mp-busca') || '').toLowerCase(), drop = document.getElementById('mp-drop'); if (!drop) return;
   if (!q) { drop.classList.remove('show'); drop.innerHTML = ''; return; }
@@ -7776,6 +7831,76 @@ Modules.mpConsolidado = function (skuSet, r) {
   const bruto = receita - custo, liq = bruto - taxa;
   return { qtd, receita, custo, taxa, bruto, liq, margemV: receita ? liq / receita * 100 : 0, margemC: custo ? liq / custo * 100 : 0, nv: sales.size, ticket: sales.size ? receita / sales.size : 0 };
 };
+/* ===== RENTABILIDADE HISTÓRICA POR FORMA DE PAGAMENTO (vendas reais) =====
+   Usa só vendas registradas (não canceladas) no período. Para os produtos selecionados:
+   - faturamento = preço efetivamente praticado − desconto real (rateado ao produto)
+   - custo = custo histórico gravado na venda (fallback p/ custo médio é SINALIZADO)
+   - taxa = taxa real da venda (taxaTotal) rateada ao produto
+   - lucro = faturamento − custo − taxa.  Cada venda é atribuída à FORMA PRINCIPAL (maior valor),
+   então nenhuma venda é contada/duplicada em mais de uma forma. */
+Modules.mpPayRentab = function (skuSet, r) {
+  const vendas = BI.vendas().filter(v => { const d = new Date(v.data); return d >= r.start && d <= r.end; });
+  const rows = {}, det = {};
+  const ensure = k => { rows[k] = rows[k] || { key: k, unidades: 0, nv: 0, faturamento: 0, custo: 0, taxa: 0 }; det[k] = det[k] || []; };
+  let incCusto = false, incTaxa = false, mistos = 0, totSel = 0;
+  vendas.forEach(v => {
+    const selItems = (v.itens || []).filter(i => skuSet.has(i.sku));
+    if (!selItems.length) return;
+    totSel++;
+    const bruto = (v.itens || []).reduce((s, i) => s + i.preco * i.qtd, 0) || 1;
+    const pvGross = selItems.reduce((s, i) => s + i.preco * i.qtd, 0);
+    const pvQtd = selItems.reduce((s, i) => s + i.qtd, 0);
+    let custoInc = false;
+    const pvCusto = selItems.reduce((s, i) => { let cu = i.custo; if (!(cu > 0)) { cu = (BI.prodInfo(i.sku) || {}).custoMedio || (BI.prodInfo(i.sku) || {}).custo || 0; custoInc = true; } return s + cu * i.qtd; }, 0);
+    if (custoInc) incCusto = true;
+    const desc = v.desconto || 0;
+    const pvFat = Math.max(0, pvGross - desc * (pvGross / bruto));          // faturamento real do produto (desconto proporcional)
+    const vTotal = v.total != null ? v.total : (bruto - desc);
+    const fracNet = vTotal ? (pvFat / vTotal) : 0;
+    const taxaProd = (v.taxaTotal != null ? v.taxaTotal : 0) * fracNet;      // taxa real rateada ao produto
+    // forma principal (maior valor pago; troco abatido do dinheiro)
+    let trocoRest = v.troco != null ? v.troco : 0;
+    const eff = (v.pagamentos || []).map(p => { let val = p.valor || 0; if (p.tipo === 'Dinheiro' && trocoRest > 0) { const cut = Math.min(val, trocoRest); val -= cut; trocoRest -= cut; } return { p, val }; }).filter(x => x.val > 0.009);
+    const temCartao = eff.some(x => /Crédito|Débito/.test(x.p.tipo));
+    if (temCartao && v.taxaTotal == null) incTaxa = true;
+    let key;
+    if (eff.length) { eff.sort((a, b) => b.val - a.val); key = BI.payKey(eff[0].p.tipo, eff[0].p.parcelas); }
+    else key = 'Produto usado';
+    if (eff.length > 1) mistos++;
+    ensure(key);
+    const row = rows[key];
+    row.unidades += pvQtd; row.nv += 1; row.faturamento += pvFat; row.custo += pvCusto; row.taxa += taxaProd;
+    det[key].push({ vendaId: v.id, data: v.data, numero: v.numero, qtd: pvQtd, fat: pvFat, custo: pvCusto, taxa: taxaProd, lucro: pvFat - pvCusto - taxaProd, formas: eff.map(x => BI.payKey(x.p.tipo, x.p.parcelas)).join(' + ') || 'Produto usado' });
+  });
+  const list = Object.values(rows).map(x => { x.lucro = x.faturamento - x.custo - x.taxa; x.margem = x.faturamento ? x.lucro / x.faturamento * 100 : 0; x.lucroUn = x.unidades ? x.lucro / x.unidades : 0; x.taxaPct = x.faturamento ? x.taxa / x.faturamento * 100 : 0; return x; })
+    .sort((a, b) => { const oa = BI.payOrder.indexOf(a.key), ob = BI.payOrder.indexOf(b.key); return (oa < 0 ? 99 : oa) - (ob < 0 ? 99 : ob) || b.faturamento - a.faturamento; });
+  const tot = list.reduce((s, x) => ({ unidades: s.unidades + x.unidades, nv: s.nv + x.nv, faturamento: s.faturamento + x.faturamento, custo: s.custo + x.custo, taxa: s.taxa + x.taxa, lucro: s.lucro + x.lucro }), { unidades: 0, nv: 0, faturamento: 0, custo: 0, taxa: 0, lucro: 0 });
+  return { list, det, incCusto, incTaxa, mistos, totSel, tot };
+};
+/* detalhamento das vendas de uma forma de pagamento (drill-down) */
+Modules.mpPayDetalhe = function (key) {
+  const S = this.mpState, r = BI.range(S.periodo, S.de, S.ate);
+  const payR = this.mpPayRentab(new Set(S.skus), r);
+  const linhas = payR.det[key] || [];
+  const canFin = App.canFinance();
+  const body = linhas.slice().sort((a, b) => new Date(b.data) - new Date(a.data)).map(x => `<tr style="cursor:pointer" onclick="Modules.vdDetail('${x.vendaId}')">
+    <td>${Fmt.date(x.data)}</td>
+    <td class="strong">${x.numero != null ? '#' + x.numero : '#' + String(x.vendaId).slice(-4)}</td>
+    <td class="num">${x.qtd}</td>
+    <td class="num strong">${Fmt.brl(x.fat)}</td>
+    ${canFin ? `<td class="num muted">${Fmt.brl(x.custo)}</td>` : ''}
+    ${canFin ? `<td class="num" style="color:var(--red)">${x.taxa > 0 ? '− ' + Fmt.brl(x.taxa) : '—'}</td>` : ''}
+    ${canFin ? `<td class="num" style="color:${x.lucro >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${Fmt.brl(x.lucro)}</td>` : ''}
+    <td class="muted" style="font-size:11.5px">${esc(x.formas)}</td>
+  </tr>`).join('');
+  Modal.open({
+    title: '💳 ' + esc(key) + ' — vendas reais', wide: true,
+    body: linhas.length ? `<div class="muted" style="font-size:12px;margin-bottom:8px">${linhas.length} venda(s) · clique numa linha para abrir a venda completa.</div>
+      <div class="table-wrap"><table><thead><tr><th>Data</th><th>Venda</th><th class="num">Qtd</th><th class="num">Faturamento</th>${canFin ? '<th class="num">Custo hist.</th><th class="num">Taxa real</th><th class="num">Lucro</th>' : ''}<th>Forma(s) na venda</th></tr></thead><tbody>${body}</tbody></table></div>`
+      : '<div class="empty-state"><div class="big">📭</div>Sem vendas nesta forma no período.</div>',
+    foot: `<button class="btn-primary" onclick="Modal.close()">Fechar</button>`
+  });
+};
 Modules.biMultiProd = function () {
   const S = this.mpState, canFin = App.canFinance();
   const periodSel = `<select id="mp-periodo" onchange="Modules.mpSetPeriodo(this.value)">${this.apPeriodos.map(o => `<option value="${o[0]}" ${S.periodo === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>`;
@@ -7794,6 +7919,97 @@ Modules.biMultiProd = function () {
   const rows = S.skus.map(sku => { const p = BI.prodInfo(sku) || { nome: sku, sku }; const T = this.apCompute(sku, r).T; return { sku, nome: p.nome, T }; });
   const C = this.mpConsolidado(new Set(S.skus), r);
   const sem = m => (Modules.simSem ? Modules.simSem(m) : { c: 'var(--txt)' });
+
+  /* ===================== COMPARAÇÃO DE PERÍODOS ===================== */
+  const pr = this.mpCmpRange(r);
+  const Cp = this.mpConsolidado(new Set(S.skus), pr);
+  const rowsCmp = S.skus.map(sku => { const p = BI.prodInfo(sku) || { nome: sku, sku }; return { sku, nome: p.nome, Tc: this.apCompute(sku, r).T, Tp: this.apCompute(sku, pr).T }; });
+  const metric = S.metric, isPP = metric === 'margemV';
+  const varChip = (vr) => `<span class="${vr.dir === 'up' ? 'up' : (vr.dir === 'down' ? 'down' : 'muted')}" style="font-weight:700">${vr.dir === 'up' ? '▲' : (vr.dir === 'down' ? '▼' : '–')} ${vr.txt}</span>`;
+  const manual = !!(S.cmpDe && S.cmpAte);
+  const cmpInfo = `<div class="card"><div class="section-title">📊 Comparação de períodos</div>
+    <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+      <div><div class="muted" style="font-size:11px">Período atual</div><b>${esc(label)}</b></div>
+      <div style="font-size:16px;color:var(--txt-3);font-weight:700">vs</div>
+      <div><div class="muted" style="font-size:11px">Período anterior${manual ? '' : ' (equivalente)'}</div><b>${esc(BI.periodoLabel('custom', pr))}</b></div>
+      <span style="flex:1;min-width:10px"></span>
+      <span style="display:inline-flex;gap:6px;align-items:center"><span class="muted" style="font-size:12px">Comparar com:</span>
+        <input type="date" value="${S.cmpDe}" onchange="Modules.mpState.cmpDe=this.value;Modules.biRender()">
+        <span class="muted">até</span>
+        <input type="date" value="${S.cmpAte}" onchange="Modules.mpState.cmpAte=this.value;Modules.biRender()">
+        ${manual ? `<button class="btn-ghost btn-sm" onclick="Modules.mpState.cmpDe='';Modules.mpState.cmpAte='';Modules.biRender()">auto</button>` : ''}
+      </span>
+    </div>
+    <div class="muted" style="font-size:11.5px;margin-top:6px">A comparação usa a mesma duração do período atual (mesmos dias do mês anterior, por padrão) para ser justa.</div></div>`;
+
+  const cmpCard = (lbl, cur, prev, fmt, pp) => { const vr = this.mpVar(cur, prev, pp); return `<div class="ap-kpi"><span>${lbl}</span><b>${fmt(cur)}</b><div class="muted" style="font-size:11px;margin-top:2px">ant: ${fmt(prev)} · ${varChip(vr)}</div></div>`; };
+  const resumoCmp = `<div class="section-title" style="margin:14px 0 8px">Resumo comparativo <span class="muted" style="font-weight:500">· só os ${S.skus.length} produto(s) selecionado(s)</span></div>
+    <div class="ap-kpis">
+      ${cmpCard('Unidades vendidas', C.qtd, Cp.qtd, v => Math.round(v) + ' un')}
+      ${cmpCard('Faturamento', C.receita, Cp.receita, v => Fmt.brl(v))}
+      ${canFin ? cmpCard('Lucro bruto', C.bruto, Cp.bruto, v => Fmt.brl(v)) : ''}
+      ${canFin ? cmpCard('Margem', C.margemV, Cp.margemV, v => Fmt.pct(v), true) : ''}
+      ${cmpCard('Ticket médio', C.ticket, Cp.ticket, v => Fmt.brl(v))}
+    </div>`;
+
+  const metrics = [['qtd', 'Unidades'], ['receita', 'Faturamento']].concat(canFin ? [['bruto', 'Lucro bruto'], ['margemV', 'Margem']] : []);
+  const metricTabs = metrics.map(m => `<button class="seg-chip" style="cursor:pointer;${metric === m[0] ? 'background:var(--accent);color:#fff;border-color:var(--accent)' : ''}" onclick="Modules.mpSetMetric('${m[0]}')">${m[1]}</button>`).join('');
+  const sortOpts = [['cresc', 'Maior crescimento'], ['queda', 'Maior queda'], ['qtd', 'Maior qtd vendida'], ['receita', 'Maior faturamento']].concat(canFin ? [['bruto', 'Maior lucro']] : []);
+  const sortSel = `<select onchange="Modules.mpSetCmpSort(this.value)">${sortOpts.map(o => `<option value="${o[0]}" ${S.cmpSort === o[0] ? 'selected' : ''}>${o[1]}</option>`).join('')}</select>`;
+  const cmpRows = rowsCmp.map(x => { const cur = this.mpMetricVal(x.Tc, metric), prev = this.mpMetricVal(x.Tp, metric); return { nome: x.nome, cur, prev, vr: this.mpVar(cur, prev, isPP), Tc: x.Tc }; });
+  const sk = S.cmpSort;
+  cmpRows.sort((a, b) => sk === 'cresc' ? (b.vr.diff - a.vr.diff) : sk === 'queda' ? (a.vr.diff - b.vr.diff) : sk === 'qtd' ? (b.Tc.qtd - a.Tc.qtd) : sk === 'receita' ? (b.Tc.receita - a.Tc.receita) : sk === 'bruto' ? (b.Tc.bruto - a.Tc.bruto) : 0);
+  const fmtv = v => this.mpMetricFmt(metric, v);
+  const diffFmt = vr => isPP ? ((vr.diff >= 0 ? '+' : '') + vr.diff.toFixed(1).replace('.', ',') + ' p.p.') : (metric === 'qtd' ? ((vr.diff >= 0 ? '+' : '') + Math.round(vr.diff) + ' un') : ((vr.diff >= 0 ? '+' : '') + Fmt.brl(vr.diff)));
+  const tabelaCmp = `<div class="card"><div class="section-title">Comparação por produto — ${this.mpMetricLabel(metric)}</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">${metricTabs}<span style="flex:1"></span><span class="muted" style="font-size:12px">Ordenar:</span>${sortSel}</div>
+    <div class="table-wrap"><table><thead><tr><th>Produto</th><th class="num">Atual</th><th class="num">Anterior</th><th class="num">Diferença</th><th class="num">Variação</th></tr></thead>
+    <tbody>${cmpRows.map(x => `<tr><td class="strong">${esc(x.nome)}</td><td class="num strong">${fmtv(x.cur)}</td><td class="num muted">${fmtv(x.prev)}</td><td class="num">${diffFmt(x.vr)}</td><td class="num">${varChip(x.vr)}</td></tr>`).join('')}</tbody></table></div></div>`;
+
+  const grafCmp = `<div class="card"><div class="section-title">Gráfico comparativo — ${this.mpMetricLabel(metric)}</div>${this.mpBarsCmp(cmpRows.map(x => x.nome), cmpRows.map(x => x.cur), cmpRows.map(x => x.prev))}</div>`;
+  const comparacao = cmpInfo + resumoCmp + tabelaCmp + grafCmp;
+
+  /* ===================== RENTABILIDADE POR FORMA DE PAGAMENTO (histórico real) ===================== */
+  const payR = this.mpPayRentab(new Set(S.skus), r);
+  const pl = payR.list.filter(x => x.nv > 0), pt = payR.tot;
+  let rentabPag;
+  if (!pl.length) {
+    rentabPag = `<div class="card"><div class="section-title">💳 Rentabilidade por forma de pagamento <span class="muted" style="font-weight:500">· vendas reais · ${esc(label)}</span></div><div class="empty-state" style="padding:22px"><div class="big">📭</div>Nenhuma venda registrada dos produtos selecionados neste período.</div></div>`;
+  } else {
+    const payRows = pl.map(x => `<tr style="cursor:pointer" onclick="Modules.mpPayDetalhe('${esc(x.key).replace(/'/g, "&#39;")}')" title="Ver as vendas reais desta forma">
+      <td class="strong">${esc(x.key)} 🔎</td>
+      <td class="num">${x.unidades}</td>
+      <td class="num">${x.nv}</td>
+      <td class="num strong">${Fmt.brl(x.faturamento)}</td>
+      ${canFin ? `<td class="num muted">${Fmt.brl(x.custo)}</td>` : ''}
+      ${canFin ? `<td class="num" style="color:var(--red)">${x.taxa > 0 ? '− ' + Fmt.brl(x.taxa) : '—'}</td>` : ''}
+      ${canFin ? `<td class="num" style="color:${x.lucro >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${Fmt.brl(x.lucro)}</td>` : ''}
+      ${canFin ? `<td class="num">${Fmt.pct(x.margem)}</td>` : ''}
+      ${canFin ? `<td class="num muted">${Fmt.brl(x.lucroUn)}</td>` : ''}
+    </tr>`).join('');
+    const foot = `<tr style="font-weight:700;border-top:2px solid var(--line)"><td>Total</td><td class="num">${pt.unidades}</td><td class="num">${pt.nv}</td><td class="num">${Fmt.brl(pt.faturamento)}</td>${canFin ? `<td class="num">${Fmt.brl(pt.custo)}</td><td class="num" style="color:var(--red)">− ${Fmt.brl(pt.taxa)}</td><td class="num" style="color:${pt.lucro >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(pt.lucro)}</td><td class="num">${Fmt.pct(pt.faturamento ? pt.lucro / pt.faturamento * 100 : 0)}</td><td class="num">—</td>` : ''}</tr>`;
+    // conclusões (base nas vendas reais)
+    const topBy = fn => pl.slice().sort((a, b) => fn(b) - fn(a))[0];
+    const bUn = topBy(x => x.unidades), bFat = topBy(x => x.faturamento), bLuc = topBy(x => x.lucro), bLucUn = topBy(x => x.lucroUn), bMar = topBy(x => x.margem);
+    const li = (ico, txt) => `<div class="ap-ins analise">${ico} ${txt}</div>`;
+    const conclusoes = `<div style="margin-top:12px">
+      ${li('📦', `Mais unidades: <b>${esc(bUn.key)}</b> (${bUn.unidades} un)`) }
+      ${li('💵', `Maior faturamento: <b>${esc(bFat.key)}</b> (${Fmt.brl(bFat.faturamento)})`)}
+      ${canFin ? li('💎', `Maior lucro total (após taxas): <b>${esc(bLuc.key)}</b> (${Fmt.brl(bLuc.lucro)})`) : ''}
+      ${canFin ? li('🏷️', `Maior lucro por unidade: <b>${esc(bLucUn.key)}</b> (${Fmt.brl(bLucUn.lucroUn)}/un)`) : ''}
+      ${canFin ? li('📐', `Maior margem após taxas: <b>${esc(bMar.key)}</b> (${Fmt.pct(bMar.margem)})`) : ''}
+      <div class="muted" style="font-size:11.5px;margin-top:6px">Faturar mais não significa lucrar mais: formas de cartão têm taxa e parcelas maiores reduzem o lucro. Compare pelo <b>lucro após taxas</b>, não só pelo faturamento.</div>
+    </div>`;
+    const avisos = [];
+    if (payR.incCusto) avisos.push('Algumas vendas não tinham custo histórico gravado — nesses casos usei o custo médio atual, então o lucro delas é aproximado.');
+    if (payR.incTaxa) avisos.push('Algumas vendas no cartão não tinham a taxa registrada — a taxa dessas não entrou no cálculo (resultado incompleto).');
+    if (payR.mistos) avisos.push(payR.mistos + ' venda(s) tiveram mais de uma forma de pagamento; cada uma foi atribuída à forma de maior valor, para não contar a venda duas vezes.');
+    const avisosHtml = avisos.length ? `<div class="alert-card" style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);margin-top:10px"><div class="a-ico">⚠️</div><div><div class="a-lbl" style="font-size:12px">${avisos.map(esc).join('<br>')}</div></div></div>` : '';
+    rentabPag = `<div class="card"><div class="section-title">💳 Rentabilidade por forma de pagamento <span class="muted" style="font-weight:500">· vendas reais · ${esc(label)}</span></div>
+      <div class="muted" style="font-size:12px;margin-bottom:8px">Somente vendas efetivamente registradas. Clique numa forma para ver as vendas que compõem o resultado.</div>
+      <div class="table-wrap"><table><thead><tr><th>Forma de pagamento</th><th class="num">Unid.</th><th class="num">Nº vendas</th><th class="num">Faturamento</th>${canFin ? '<th class="num">Custo hist.</th><th class="num">Taxas reais</th><th class="num">Lucro após taxas</th><th class="num">Margem</th><th class="num">Lucro/un</th>' : ''}</tr></thead><tbody>${payRows}</tbody><tfoot>${foot}</tfoot></table></div>
+      ${conclusoes}${avisosHtml}</div>`;
+  }
 
   // ordenação
   const key = S.sort, getV = x => key === 'nome' ? x.nome : (x.T[key] != null ? x.T[key] : 0);
@@ -7854,7 +8070,7 @@ Modules.biMultiProd = function () {
   const ins = this.mpInsights(rows, C, canFin);
   const analise = `<div class="card"><div class="section-title">🧠 Análise</div>${ins.map(t => `<div class="ap-ins ${t.t}">${t.e} ${t.txt}</div>`).join('')}</div>`;
 
-  return filtros + resumo + best + graf + tabela + analise;
+  return filtros + comparacao + rentabPag + resumo + best + graf + tabela + analise;
 };
 Modules.mpInsights = function (rows, C, canFin) {
   const out = [], withSales = rows.filter(x => x.T.qtd > 0), zero = rows.filter(x => x.T.qtd === 0);
