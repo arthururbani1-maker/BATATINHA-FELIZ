@@ -683,7 +683,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 8.0 · rentabilidade histórica por forma de pagamento</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 8.1 · exportar dados para análise</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -5420,6 +5420,15 @@ Modules.cfgSegurancaCard = function () {
     <p class="muted" style="font-size:12px;margin-top:8px">♻️ <b>Recuperar backup</b> e 📥 <b>Importar cópia</b> agora <b>mesclam</b> (só somam vendas/registros que faltam, sem apagar nada). Ideal para recuperar dados de outro PC ou de antes de uma perda.</p>
     <p class="muted" style="font-size:12px;margin-top:10px">Dica: baixe uma cópia periodicamente. Se algum dia notar dados sumindo, restaure o backup aqui antes de qualquer outra coisa.</p>
   </div>
+  <div class="card" style="margin-bottom:16px;border:1px solid rgba(90,140,255,.35)">
+    <div class="section-title">📊 Exportar dados para análise</div>
+    <p class="muted" style="line-height:1.6;margin-bottom:12px">Gere um retrato do negócio para analisar com o Claude. O <b>Resumo</b> você lê na hora e cola no chat; o <b>arquivo completo</b> traz todos os dados (vendas, produtos, compras, financeiro) para uma análise mais profunda — é só enviar o .json no chat.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn-primary" onclick="Modules.cfgResumoAnalise()">📊 Ver resumo (copiar/colar)</button>
+      <button class="btn-ghost" onclick="Modules.cfgExportAnalise()">⬇️ Baixar dados completos (.json)</button>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:8px">Somente leitura — nada é alterado nos seus dados.</p>
+  </div>
   <div class="card" style="border:1px solid rgba(245,69,92,.45)">
     <div class="section-title" style="color:var(--red)">🛡️ Reset de Dados do Sistema</div>
     <div class="alert-card danger" style="margin-bottom:16px"><div class="a-ico">⚠️</div><div><div class="a-lbl" style="line-height:1.5">Esta ação apagará <b>todos os dados operacionais</b>: produtos, estoque, vendas, histórico, contas a pagar/receber, movimentações financeiras, caixa, compras, fornecedores, garantias, trocas, usados recebidos e relatórios.<br>A <b>estrutura</b> do ERP, temas, impressora, taxas, usuários e senhas <b>continuam intactos</b>. <b>Esta ação não pode ser desfeita.</b></div></div></div>
@@ -9151,6 +9160,228 @@ const Plan = {
 
 /* integração com o router: Modules.planejamento é o que o App.go() chama */
 if (typeof Modules !== 'undefined') { Modules.planejamento = function () { return Plan.page(); }; }
+
+</script>
+  <script>
+/* ===== export-analise.js ===== */
+/* ============================================================
+   EXPORTAÇÃO PARA ANÁLISE
+   - cfgExportAnalise(): baixa um .json COMPLETO (todas as coleções)
+     com um cabeçalho _meta (loja, data, período, contagens).
+   - cfgResumoAnalise(): monta um RESUMO EXECUTIVO em texto
+     (faturamento, lucro, margem, categorias, formas de pagamento,
+      top produtos, estoque) para ler na hora, copiar ou baixar.
+   Nenhum dado é alterado — tudo é somente leitura.
+   ============================================================ */
+(function () {
+  function _num(v) { return +v || 0; }
+  function _brl(v) { try { return Fmt.brl(v); } catch (e) { return 'R$ ' + _num(v).toFixed(2); } }
+  function _pct(v) { return (Math.round(_num(v) * 10) / 10).toString().replace('.', ',') + '%'; }
+  function _dataBR(d) { try { return new Date(d).toLocaleDateString('pt-BR'); } catch (e) { return '—'; } }
+
+  function _baixarArquivo(nome, conteudo, mime) {
+    const blob = new Blob([conteudo], { type: mime || 'application/octet-stream' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = nome;
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 200);
+  }
+
+  /* ---------- 1) JSON COMPLETO ---------- */
+  Modules.cfgExportAnalise = function () {
+    try {
+      const st = (DB.state && DB.state()) || {};
+      const vendas = Array.isArray(st.vendas) ? st.vendas : DB.all('vendas');
+      const validas = vendas.filter(function (v) { return !v.cancelada; });
+      const datas = validas.map(function (v) { return new Date(v.data).getTime(); }).filter(function (t) { return !isNaN(t); });
+      const meta = {
+        loja: 'Rico Games',
+        geradoEm: new Date().toISOString(),
+        periodoVendas: datas.length ? { de: new Date(Math.min.apply(null, datas)).toISOString(), ate: new Date(Math.max.apply(null, datas)).toISOString() } : null,
+        contagem: {
+          produtos: (st.produtos || []).length,
+          vendas: vendas.length,
+          vendasValidas: validas.length,
+          compras: (st.compras || []).length,
+          financeiro: (st.financeiro || []).length,
+          movimentacoes: (st.movimentacoes || []).length,
+          usadosPendentes: (st.usadosPendentes || []).length,
+          trocas: (st.trocas || []).length
+        },
+        observacao: 'Exportação completa de todas as coleções do Rico Games ERP para análise. Somente leitura.'
+      };
+      const pkg = { _meta: meta };
+      Object.keys(st).forEach(function (k) { pkg[k] = st[k]; });
+      const nome = 'rico-games-analise-' + new Date().toISOString().slice(0, 10) + '.json';
+      _baixarArquivo(nome, JSON.stringify(pkg, null, 2), 'application/json');
+      Toast.ok('Arquivo de análise baixado. Envie este .json para o Claude.');
+    } catch (e) { Toast.err('Falha ao gerar o arquivo de análise.'); }
+  };
+
+  /* ---------- 2) RESUMO EXECUTIVO (texto) ---------- */
+  Modules.gerarResumoAnalise = function () {
+    const vAll = DB.all('vendas');
+    const v = vAll.filter(function (x) { return !x.cancelada; });
+    const canceladas = vAll.length - v.length;
+
+    const datas = v.map(function (x) { return new Date(x.data).getTime(); }).filter(function (t) { return !isNaN(t); });
+    const dMin = datas.length ? new Date(Math.min.apply(null, datas)) : null;
+    const dMax = datas.length ? new Date(Math.max.apply(null, datas)) : null;
+
+    const fat = v.reduce(function (s, x) { return s + _num(x.total); }, 0);
+    const custo = v.reduce(function (s, x) { return s + _num(x.custoTotal); }, 0);
+    const taxas = v.reduce(function (s, x) { return s + _num(x.taxaTotal); }, 0);
+    const lucroBruto = fat - custo;
+    const lucroLiq = v.reduce(function (s, x) {
+      return s + (x.lucroLiquido != null ? _num(x.lucroLiquido) : (_num(x.total) - _num(x.custoTotal) - _num(x.taxaTotal)));
+    }, 0);
+    const margemBruta = fat ? lucroBruto / fat * 100 : 0;
+    const margemLiq = fat ? lucroLiq / fat * 100 : 0;
+    const ticket = v.length ? fat / v.length : 0;
+
+    // por categoria
+    const cat = {};
+    v.forEach(function (x) {
+      (x.itens || []).forEach(function (i) {
+        const k = i.categoria || 'Sem categoria';
+        cat[k] = cat[k] || { fat: 0, custo: 0, un: 0 };
+        cat[k].fat += _num(i.preco) * _num(i.qtd);
+        cat[k].custo += _num(i.custo) * _num(i.qtd);
+        cat[k].un += _num(i.qtd);
+      });
+    });
+    const cats = Object.keys(cat).map(function (k) {
+      const c = cat[k]; return { nome: k, fat: c.fat, un: c.un, margem: c.fat ? (c.fat - c.custo) / c.fat * 100 : 0 };
+    }).sort(function (a, b) { return b.fat - a.fat; });
+
+    // por forma de pagamento
+    const pay = {};
+    v.forEach(function (x) {
+      (x.pagamentos || []).forEach(function (p) {
+        const k = p.tipo || p.forma || p.method || '—';
+        pay[k] = pay[k] || { valor: 0, n: 0 };
+        pay[k].valor += _num(p.valor); pay[k].n++;
+      });
+    });
+    const pays = Object.keys(pay).map(function (k) { return { nome: k, valor: pay[k].valor, n: pay[k].n }; })
+      .sort(function (a, b) { return b.valor - a.valor; });
+
+    // top produtos
+    const prod = {};
+    v.forEach(function (x) {
+      (x.itens || []).forEach(function (i) {
+        const k = i.nome || i.sku || '—';
+        prod[k] = prod[k] || { fat: 0, un: 0, custo: 0 };
+        prod[k].fat += _num(i.preco) * _num(i.qtd);
+        prod[k].custo += _num(i.custo) * _num(i.qtd);
+        prod[k].un += _num(i.qtd);
+      });
+    });
+    const topProd = Object.keys(prod).map(function (k) {
+      const p = prod[k]; return { nome: k, fat: p.fat, un: p.un, margem: p.fat ? (p.fat - p.custo) / p.fat * 100 : 0 };
+    }).sort(function (a, b) { return b.fat - a.fat; }).slice(0, 15);
+
+    // estoque
+    const prods = DB.all('produtos');
+    const estCusto = prods.reduce(function (s, p) { return s + (_num(p.custoMedio) || _num(p.custo)) * _num(p.qtd); }, 0);
+    const estPreco = prods.reduce(function (s, p) { return s + _num(p.preco) * _num(p.qtd); }, 0);
+    const comEstoque = prods.filter(function (p) { return _num(p.qtd) > 0; }).length;
+
+    // pré-vendas e usados pendentes
+    const preVendas = v.filter(function (x) { return x.tipo === 'pre_venda'; }).length;
+    const usadosPend = (DB.all('usadosPendentes') || []).filter(function (u) { return u.status === 'pendente'; }).length;
+
+    // a receber / a pagar
+    const fin = DB.all('financeiro') || [];
+    const aReceber = fin.filter(function (f) { return f.tipo === 'entrada' && f.status === 'pendente'; })
+      .reduce(function (s, f) { return s + (_num(f.valor) - _num(f.pago)); }, 0);
+    const aPagar = fin.filter(function (f) { return f.tipo === 'saida' && f.status === 'pendente'; })
+      .reduce(function (s, f) { return s + (_num(f.valor) - _num(f.pago)); }, 0);
+
+    const L = [];
+    L.push('========================================');
+    L.push('  RICO GAMES — RESUMO PARA ANÁLISE');
+    L.push('  Gerado em: ' + new Date().toLocaleString('pt-BR'));
+    if (dMin && dMax) L.push('  Período das vendas: ' + _dataBR(dMin) + ' a ' + _dataBR(dMax));
+    L.push('========================================');
+    L.push('');
+    L.push('VENDAS (apenas válidas, canceladas fora)');
+    L.push('  Nº de vendas .......... ' + v.length + (canceladas ? '  (' + canceladas + ' canceladas)' : ''));
+    L.push('  Faturamento ........... ' + _brl(fat));
+    L.push('  Custo das mercadorias . ' + _brl(custo));
+    L.push('  Lucro bruto ........... ' + _brl(lucroBruto) + '   (margem ' + _pct(margemBruta) + ')');
+    L.push('  Taxas de cartão ....... ' + _brl(taxas));
+    L.push('  Lucro líquido ......... ' + _brl(lucroLiq) + '   (margem ' + _pct(margemLiq) + ')');
+    L.push('  Ticket médio .......... ' + _brl(ticket));
+    L.push('  Pré-vendas ............ ' + preVendas);
+    L.push('');
+    L.push('MARGEM POR CATEGORIA');
+    cats.forEach(function (c) {
+      L.push('  ' + _pad(c.nome, 18) + ' ' + _pad(_brl(c.fat), 16) + ' margem ' + _pct(c.margem) + '  (' + c.un + ' un)');
+    });
+    L.push('');
+    L.push('FORMAS DE PAGAMENTO (valor recebido)');
+    pays.forEach(function (p) {
+      const pctFat = fat ? p.valor / (pays.reduce(function (s, y) { return s + y.valor; }, 0)) * 100 : 0;
+      L.push('  ' + _pad(p.nome, 18) + ' ' + _pad(_brl(p.valor), 16) + _pct(pctFat) + '  (' + p.n + ' pagts)');
+    });
+    L.push('');
+    L.push('TOP 15 PRODUTOS POR FATURAMENTO');
+    topProd.forEach(function (p, idx) {
+      L.push('  ' + _pad((idx + 1) + '. ' + p.nome, 32) + ' ' + _pad(_brl(p.fat), 16) + 'margem ' + _pct(p.margem) + '  (' + p.un + ' un)');
+    });
+    L.push('');
+    L.push('ESTOQUE');
+    L.push('  Produtos cadastrados .. ' + prods.length + '  (' + comEstoque + ' com saldo)');
+    L.push('  Valor a custo ......... ' + _brl(estCusto));
+    L.push('  Valor a preço de venda  ' + _brl(estPreco));
+    L.push('  Usados pendentes ...... ' + usadosPend);
+    L.push('');
+    L.push('FINANCEIRO (em aberto)');
+    L.push('  A receber ............. ' + _brl(aReceber));
+    L.push('  A pagar ............... ' + _brl(aPagar));
+    L.push('');
+    L.push('========================================');
+    L.push('Obs.: números calculados sobre vendas não canceladas.');
+    L.push('Lucro não desconta despesas fixas (aluguel, folha etc.).');
+    return L.join('\n');
+  };
+
+  function _pad(s, n) { s = String(s == null ? '' : s); while (s.length < n) s += ' '; return s.length > n ? s.slice(0, n) : s; }
+
+  Modules.cfgResumoAnalise = function () {
+    let txt = '';
+    try { txt = Modules.gerarResumoAnalise(); } catch (e) { return Toast.err('Falha ao gerar o resumo.'); }
+    const esc = function (s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+    Modal.open({
+      title: '📊 Resumo para análise', wide: true,
+      body: '<p class="muted" style="line-height:1.6;margin-bottom:10px">Esse é um retrato rápido do negócio, pronto pra você <b>ler</b>, <b>copiar</b> e colar no chat com o Claude, ou <b>baixar</b> como arquivo de texto.</p>'
+        + '<textarea id="resumo-analise-txt" readonly style="width:100%;height:340px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;background:var(--bg-2);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:12px;white-space:pre;overflow:auto">' + esc(txt) + '</textarea>',
+      foot: '<button class="btn-ghost" onclick="Modal.close()">Fechar</button>'
+        + '<button class="btn-ghost" onclick="Modules.cfgResumoDownload()">⬇️ Baixar .txt</button>'
+        + '<button class="btn-primary" onclick="Modules.cfgResumoCopiar()">📋 Copiar tudo</button>'
+    });
+  };
+
+  Modules.cfgResumoCopiar = function () {
+    const ta = document.getElementById('resumo-analise-txt');
+    if (!ta) return;
+    try {
+      ta.removeAttribute('readonly'); ta.focus(); ta.select();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(ta.value).then(function () { Toast.ok('Resumo copiado!'); }, function () { document.execCommand('copy'); Toast.ok('Resumo copiado!'); });
+      } else { document.execCommand('copy'); Toast.ok('Resumo copiado!'); }
+      ta.setAttribute('readonly', 'readonly');
+    } catch (e) { Toast.err('Não consegui copiar — selecione o texto e use Cmd+C.'); }
+  };
+
+  Modules.cfgResumoDownload = function () {
+    let txt = '';
+    try { txt = Modules.gerarResumoAnalise(); } catch (e) { return Toast.err('Falha ao gerar o resumo.'); }
+    _baixarArquivo('rico-games-resumo-' + new Date().toISOString().slice(0, 10) + '.txt', txt, 'text/plain;charset=utf-8');
+    Toast.ok('Resumo baixado.');
+  };
+})();
 
 </script>
   <script>
