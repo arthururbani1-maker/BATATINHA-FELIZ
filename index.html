@@ -683,7 +683,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 8.1 · exportar dados para análise</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 8.1 · exportar e analisar por mês</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -9218,11 +9218,26 @@ if (typeof Modules !== 'undefined') { Modules.planejamento = function () { retur
     } catch (e) { Toast.err('Falha ao gerar o arquivo de análise.'); }
   };
 
-  /* ---------- 2) RESUMO EXECUTIVO (texto) ---------- */
-  Modules.gerarResumoAnalise = function () {
+  /* ---------- helpers de mês ---------- */
+  var _MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  function _mesKey(d) { d = new Date(d); if (isNaN(d)) return null; return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+  function _mesLabel(key) { var p = String(key).split('-'); var mi = (parseInt(p[1], 10) || 1) - 1; return _MESES[mi] + '/' + p[0]; }
+  Modules._mesesVendas = function () {
+    var set = {};
+    DB.all('vendas').filter(function (x) { return !x.cancelada; }).forEach(function (x) {
+      var k = _mesKey(x.data); if (k) set[k] = true;
+    });
+    return Object.keys(set).sort().reverse(); // mais recente primeiro
+  };
+
+  /* ---------- 2) RESUMO EXECUTIVO (texto) ----------
+     mes = 'all' (padrão) ou 'YYYY-MM' para um mês específico */
+  Modules.gerarResumoAnalise = function (mes) {
+    var umMes = mes && mes !== 'all';
     const vAll = DB.all('vendas');
-    const v = vAll.filter(function (x) { return !x.cancelada; });
-    const canceladas = vAll.length - v.length;
+    var vBase = vAll.filter(function (x) { return !x.cancelada; });
+    const v = umMes ? vBase.filter(function (x) { return _mesKey(x.data) === mes; }) : vBase;
+    const canceladas = umMes ? vAll.filter(function (x) { return x.cancelada && _mesKey(x.data) === mes; }).length : (vAll.length - vBase.length);
 
     const datas = v.map(function (x) { return new Date(x.data).getTime(); }).filter(function (t) { return !isNaN(t); });
     const dMin = datas.length ? new Date(Math.min.apply(null, datas)) : null;
@@ -9302,6 +9317,7 @@ if (typeof Modules !== 'undefined') { Modules.planejamento = function () { retur
     L.push('========================================');
     L.push('  RICO GAMES — RESUMO PARA ANÁLISE');
     L.push('  Gerado em: ' + new Date().toLocaleString('pt-BR'));
+    L.push('  Recorte: ' + (umMes ? _mesLabel(mes) : 'Todos os meses'));
     if (dMin && dMax) L.push('  Período das vendas: ' + _dataBR(dMin) + ' a ' + _dataBR(dMax));
     L.push('========================================');
     L.push('');
@@ -9331,16 +9347,21 @@ if (typeof Modules !== 'undefined') { Modules.planejamento = function () { retur
       L.push('  ' + _pad((idx + 1) + '. ' + p.nome, 32) + ' ' + _pad(_brl(p.fat), 16) + 'margem ' + _pct(p.margem) + '  (' + p.un + ' un)');
     });
     L.push('');
-    L.push('ESTOQUE');
-    L.push('  Produtos cadastrados .. ' + prods.length + '  (' + comEstoque + ' com saldo)');
-    L.push('  Valor a custo ......... ' + _brl(estCusto));
-    L.push('  Valor a preço de venda  ' + _brl(estPreco));
-    L.push('  Usados pendentes ...... ' + usadosPend);
-    L.push('');
-    L.push('FINANCEIRO (em aberto)');
-    L.push('  A receber ............. ' + _brl(aReceber));
-    L.push('  A pagar ............... ' + _brl(aPagar));
-    L.push('');
+    if (!umMes) {
+      L.push('ESTOQUE (posição de hoje)');
+      L.push('  Produtos cadastrados .. ' + prods.length + '  (' + comEstoque + ' com saldo)');
+      L.push('  Valor a custo ......... ' + _brl(estCusto));
+      L.push('  Valor a preço de venda  ' + _brl(estPreco));
+      L.push('  Usados pendentes ...... ' + usadosPend);
+      L.push('');
+      L.push('FINANCEIRO (em aberto, hoje)');
+      L.push('  A receber ............. ' + _brl(aReceber));
+      L.push('  A pagar ............... ' + _brl(aPagar));
+      L.push('');
+    } else {
+      L.push('(Estoque e financeiro refletem sempre a posição de hoje — por isso só aparecem na visão "Todos os meses".)');
+      L.push('');
+    }
     L.push('========================================');
     L.push('Obs.: números calculados sobre vendas não canceladas.');
     L.push('Lucro não desconta despesas fixas (aluguel, folha etc.).');
@@ -9351,16 +9372,28 @@ if (typeof Modules !== 'undefined') { Modules.planejamento = function () { retur
 
   Modules.cfgResumoAnalise = function () {
     let txt = '';
-    try { txt = Modules.gerarResumoAnalise(); } catch (e) { return Toast.err('Falha ao gerar o resumo.'); }
+    try { txt = Modules.gerarResumoAnalise('all'); } catch (e) { return Toast.err('Falha ao gerar o resumo.'); }
     const esc = function (s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); };
+    const meses = Modules._mesesVendas();
+    const opts = '<option value="all">Todos os meses</option>' + meses.map(function (k) { return '<option value="' + k + '">' + _mesLabel(k) + '</option>'; }).join('');
     Modal.open({
       title: '📊 Resumo para análise', wide: true,
-      body: '<p class="muted" style="line-height:1.6;margin-bottom:10px">Esse é um retrato rápido do negócio, pronto pra você <b>ler</b>, <b>copiar</b> e colar no chat com o Claude, ou <b>baixar</b> como arquivo de texto.</p>'
+      body: '<p class="muted" style="line-height:1.6;margin-bottom:10px">Retrato do negócio, pronto pra <b>ler</b>, <b>copiar</b> e colar no chat com o Claude, ou <b>baixar</b> em texto. Escolha o mês para puxar o relatório daquele período.</p>'
+        + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap"><label style="font-size:13px;font-weight:600;color:var(--txt-2)">Mês:</label>'
+        + '<select id="resumo-mes" onchange="Modules.cfgResumoRefresh()" style="background:var(--bg-2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:7px 10px;font-size:13px;min-width:180px">' + opts + '</select></div>'
         + '<textarea id="resumo-analise-txt" readonly style="width:100%;height:340px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.5;background:var(--bg-2);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:12px;white-space:pre;overflow:auto">' + esc(txt) + '</textarea>',
       foot: '<button class="btn-ghost" onclick="Modal.close()">Fechar</button>'
         + '<button class="btn-ghost" onclick="Modules.cfgResumoDownload()">⬇️ Baixar .txt</button>'
         + '<button class="btn-primary" onclick="Modules.cfgResumoCopiar()">📋 Copiar tudo</button>'
     });
+  };
+
+  Modules._resumoMesSel = function () { var s = document.getElementById('resumo-mes'); return (s && s.value) || 'all'; };
+
+  Modules.cfgResumoRefresh = function () {
+    const ta = document.getElementById('resumo-analise-txt'); if (!ta) return;
+    try { ta.value = Modules.gerarResumoAnalise(Modules._resumoMesSel()); ta.scrollTop = 0; }
+    catch (e) { Toast.err('Falha ao gerar o resumo.'); }
   };
 
   Modules.cfgResumoCopiar = function () {
@@ -9376,9 +9409,10 @@ if (typeof Modules !== 'undefined') { Modules.planejamento = function () { retur
   };
 
   Modules.cfgResumoDownload = function () {
-    let txt = '';
-    try { txt = Modules.gerarResumoAnalise(); } catch (e) { return Toast.err('Falha ao gerar o resumo.'); }
-    _baixarArquivo('rico-games-resumo-' + new Date().toISOString().slice(0, 10) + '.txt', txt, 'text/plain;charset=utf-8');
+    let txt = '', mes = Modules._resumoMesSel();
+    try { txt = Modules.gerarResumoAnalise(mes); } catch (e) { return Toast.err('Falha ao gerar o resumo.'); }
+    const sufixo = (mes && mes !== 'all') ? mes : new Date().toISOString().slice(0, 10);
+    _baixarArquivo('rico-games-resumo-' + sufixo + '.txt', txt, 'text/plain;charset=utf-8');
     Toast.ok('Resumo baixado.');
   };
 })();
