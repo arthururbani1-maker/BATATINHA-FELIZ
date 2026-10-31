@@ -683,7 +683,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 8.1 · exportar e analisar por mês</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 8.2 · assistência interna no usado (fora do cupom)</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -2347,8 +2347,10 @@ const Modules = {
         </div>
         <div class="form-grid">
           <div class="field"><label>Quantidade recebida *</label><input id="u-qtd" type="number" min="1" step="1" value="${u ? (u.qtd || 1) : 1}" oninput="Modules.utCalc()"></div>
-          <div class="field"><label>Valor unitário atribuído (R$) *</label><input id="u-valor" type="text" inputmode="decimal" placeholder="0,00" value="${u ? String(u.valorUnit != null ? u.valorUnit : u.valor).replace('.', ',') : ''}" oninput="Modules.utCalc()"></div>
-          <div class="field full"><div class="mini-stat" style="background:var(--bg-2);border-radius:9px;padding:9px 12px;margin:0"><span>Valor total recebido (qtd × unitário)</span><b style="color:var(--green)" id="u-total-live">${Fmt.brl((u ? (u.qtd || 1) : 1) * (u ? (u.valorUnit != null ? u.valorUnit : u.valor) : 0))}</b></div></div>
+          <div class="field"><label>Valor unitário atribuído (R$) * <span class="muted" style="font-weight:400">· abate do cliente</span></label><input id="u-valor" type="text" inputmode="decimal" placeholder="0,00" value="${u ? String(u.valorUnit != null ? u.valorUnit : u.valor).replace('.', ',') : ''}" oninput="Modules.utCalc()"></div>
+          <div class="field"><label>Assistência / custo interno (unit.) <span class="muted" style="font-weight:400">· NÃO aparece no comprovante</span></label><input id="u-assist" type="text" inputmode="decimal" placeholder="0,00" value="${u ? String(u.assistUnit != null ? u.assistUnit : 0).replace('.', ',') : ''}" oninput="Modules.utCalc()"></div>
+          <div class="field full"><div class="mini-stat" style="background:var(--green-soft);border-radius:9px;padding:9px 12px;margin:0"><span>Abate ao cliente (qtd × valor atribuído) · vai no comprovante</span><b style="color:var(--green)" id="u-total-live">${Fmt.brl((u ? (u.qtd || 1) : 1) * (u ? (u.valorUnit != null ? u.valorUnit : u.valor) : 0))}</b></div>
+            <div class="mini-stat" style="background:var(--bg-2);border-radius:9px;padding:9px 12px;margin:8px 0 0"><span>Custo de aquisição interno (valor + assistência)</span><b id="u-custo-live">${Fmt.brl((u ? (u.qtd || 1) : 1) * ((u ? (u.valorUnit != null ? u.valorUnit : u.valor) : 0) + (u && u.assistUnit != null ? u.assistUnit : 0)))}</b></div></div>
           <div class="field"><label>Estado do produto</label><select id="u-estado"><option ${sel(u && u.estado, 'Excelente')}>Excelente</option><option ${u ? sel(u.estado, 'Bom') : 'selected'}>Bom</option><option ${sel(u && u.estado, 'Regular')}>Regular</option><option ${sel(u && u.estado, 'Com defeito')}>Com defeito</option></select></div>
           <div class="field"><label>Nº de série <span class="muted" style="font-weight:400">· itens únicos = qtd 1</span></label><input id="u-serie" value="${u ? esc(u.serie || '') : ''}"></div>
           <div class="field full"><label>Acompanha</label><div style="display:flex;gap:18px;padding-top:8px;flex-wrap:wrap"><label style="font-weight:400"><input type="checkbox" id="u-controle" ${!u || u.controle ? 'checked' : ''}> Controle</label><label style="font-weight:400"><input type="checkbox" id="u-cabos" ${!u || u.cabos ? 'checked' : ''}> Cabos</label><label style="font-weight:400"><input type="checkbox" id="u-caixa" ${u && u.caixa ? 'checked' : ''}> Caixa</label></div></div>
@@ -2409,20 +2411,23 @@ const Modules = {
   },
   utRemoveItem(idx) { this.cart.usados.splice(idx, 1); this.utRender(); },
   utCalc() {
-    const q = parseInt(fval('u-qtd')) || 0, v = moneyBR(fval('u-valor'));
-    const el = document.getElementById('u-total-live'); if (el) el.textContent = Fmt.brl((isNaN(v) ? 0 : v) * q);
+    const q = parseInt(fval('u-qtd')) || 0, v = moneyBR(fval('u-valor')), a = moneyBR(fval('u-assist'));
+    const vv = isNaN(v) ? 0 : v, aa = isNaN(a) ? 0 : a;
+    const el = document.getElementById('u-total-live'); if (el) el.textContent = Fmt.brl(vv * q);
+    const ec = document.getElementById('u-custo-live'); if (ec) ec.textContent = Fmt.brl((vv + aa) * q);
   },
   utConfirm() {
     const p = this.utSel, valorUnit = moneyBR(fval('u-valor'));
     if (!p) return Toast.err('Selecione um produto.');
     if (isNaN(valorUnit) || valorUnit <= 0) return Toast.err('Informe o valor unitário atribuído.');
+    let assistUnit = moneyBR(fval('u-assist')); if (isNaN(assistUnit) || assistUnit < 0) assistUnit = 0;
     let qtd = parseInt(fval('u-qtd')) || 0;
     if (qtd < 1) return Toast.err('A quantidade recebida deve ser maior que zero.');
     const serie = fval('u-serie');
     if (serie && qtd > 1) { qtd = 1; Toast.warn('Item com número de série é único — quantidade ajustada para 1.'); }
     const obj = {
       produtoId: p.id, nome: p.nome, categoria: p.categoria, marca: p.marca, condicao: p.condicao,
-      qtd, valorUnit, valor: Math.round(valorUnit * qtd * 100) / 100,
+      qtd, valorUnit, assistUnit, valor: Math.round(valorUnit * qtd * 100) / 100,
       estado: fval('u-estado'), serie, controle: fchk('u-controle'), cabos: fchk('u-cabos'), caixa: fchk('u-caixa'),
       obs: fval('u-obs')
     };
@@ -8128,6 +8133,7 @@ const UP = {
         modelo: u.modelo || '', condicao: u.condicao || 'usado', estado: u.estado || '', serie: u.serie || '',
         controle: !!u.controle, cabos: !!u.cabos, caixa: !!u.caixa,
         qtd: un, valorUnit: (u.valorUnit != null ? u.valorUnit : (u.valor || 0) / un), valor: u.valor || 0,
+        assistUnit: +u.assistUnit || 0, // custo interno de assistência (NÃO é abate do cliente, não vai ao cupom)
         obs: u.obs || '', responsavel: this.quem(), data: new Date().toISOString(),
         status: 'pendente', aprovadoEm: null, aprovadoPor: null
       });
@@ -8150,7 +8156,9 @@ const UP = {
     const d = dados || {};
     const nome = d.nome || u.nome;
     const qtd = Math.max(1, parseInt(d.qtd != null ? d.qtd : u.qtd, 10) || 1);
-    const valorUnit = (d.valorUnit != null ? d.valorUnit : u.valorUnit) || 0;
+    const valorUnit = (d.valorUnit != null ? d.valorUnit : u.valorUnit) || 0;           // abate ao cliente (comercial)
+    const assistUnit = (d.assistUnit != null ? d.assistUnit : u.assistUnit) || 0;       // assistência (custo interno)
+    const custoUnit = Math.round((valorUnit + assistUnit) * 100) / 100;                  // custo de aquisição = valor + assistência
     const valorTotal = Math.round(valorUnit * qtd * 100) / 100;
     const resp = this.quem();
     let produtoId = u.produtoId, p = produtoId ? DB.get('produtos', produtoId) : null;
@@ -8171,16 +8179,16 @@ const UP = {
     }
     const qAntes = p.qtd || 0, cmAntes = p.custoMedio || p.custo || 0;
     const qNova = qAntes + qtd;
-    const custoMedio = qNova ? ((cmAntes * qAntes) + valorUnit * qtd) / qNova : valorUnit;
+    const custoMedio = qNova ? ((cmAntes * qAntes) + custoUnit * qtd) / qNova : custoUnit;
     const ents = (p.entradas || []).slice();
-    ents.unshift({ data: new Date().toISOString(), tipo: 'Usado recebido em troca (aprovado)', qtd, custoUnit: valorUnit, fornecedor: 'Cliente', obs: 'Venda #' + (u.numeroVenda || (u.vendaId || '').slice(-4)) + (d.obs || u.obs ? ' · ' + (d.obs || u.obs) : ''), responsavel: resp });
-    const patch = Object.assign({ qtd: qNova, custo: valorUnit, custoMedio: Math.round(custoMedio * 100) / 100, entradas: ents }, patchExtra);
+    ents.unshift({ data: new Date().toISOString(), tipo: 'Usado recebido em troca (aprovado)', qtd, custoUnit, obsCusto: assistUnit ? ('valor ' + Fmt.brl(valorUnit) + ' + assistência ' + Fmt.brl(assistUnit)) : null, fornecedor: 'Cliente', obs: 'Venda #' + (u.numeroVenda || (u.vendaId || '').slice(-4)) + (d.obs || u.obs ? ' · ' + (d.obs || u.obs) : ''), responsavel: resp });
+    const patch = Object.assign({ qtd: qNova, custo: custoUnit, custoMedio: Math.round(custoMedio * 100) / 100, entradas: ents }, patchExtra);
     if (u.serie && !p.serie && qtd === 1) patch.serie = u.serie;
     if (d.nome) patch.nome = d.nome;
     DB.update('produtos', produtoId, patch);
     DB.update(this.COLL, id, {
       status: 'aprovado', aprovadoEm: new Date().toISOString(), aprovadoPor: resp,
-      produtoId, nome, qtd, valorUnit, valor: valorTotal,
+      produtoId, nome, qtd, valorUnit, assistUnit, custoUnit, valor: valorTotal,
       qtdAntes: qAntes, custoMedioAntes: cmAntes, // p/ estorno preciso
       categoria: patchExtra.categoria, marca: patchExtra.marca, modelo: patchExtra.modelo, condicao: patchExtra.condicao, obs: d.obs || u.obs || ''
     });
@@ -8204,11 +8212,12 @@ const UP = {
           const qtd = u.qtd || 1, qAtual = p.qtd || 0;
           const qNova = Math.max(0, qAtual - qtd);
           // desfaz a contribuição do usado no custo médio agregado (aproximação segura)
+          const cUnit = (u.custoUnit != null ? u.custoUnit : ((u.valorUnit || 0) + (u.assistUnit || 0))); // reverte o custo cheio (valor + assistência)
           let cm = p.custoMedio || p.custo || 0;
-          if (qNova > 0) { const rem = (cm * qAtual) - (u.valorUnit || 0) * qtd; cm = rem > 0 ? rem / qNova : (u.custoMedioAntes || cm); }
+          if (qNova > 0) { const rem = (cm * qAtual) - cUnit * qtd; cm = rem > 0 ? rem / qNova : (u.custoMedioAntes || cm); }
           else cm = u.custoMedioAntes != null ? u.custoMedioAntes : cm;
           const ents = (p.entradas || []).slice();
-          ents.unshift({ data: new Date().toISOString(), tipo: 'Estorno de usado (venda cancelada)', qtd: -qtd, custoUnit: u.valorUnit || 0, obs: 'Venda #' + (u.numeroVenda || vendaId.slice(-4)) + ' cancelada', responsavel: this.quem() });
+          ents.unshift({ data: new Date().toISOString(), tipo: 'Estorno de usado (venda cancelada)', qtd: -qtd, custoUnit: cUnit, obs: 'Venda #' + (u.numeroVenda || vendaId.slice(-4)) + ' cancelada', responsavel: this.quem() });
           DB.update('produtos', u.produtoId, { qtd: qNova, custoMedio: Math.round(cm * 100) / 100, entradas: ents });
         }
         DB.update(this.COLL, u.id, { status: 'estornado', estornadoEm: new Date().toISOString() });
