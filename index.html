@@ -683,7 +683,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 8.2 · assistência interna no usado (fora do cupom)</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 8.3 · histórico do usado mostra assistência (sem dobrar)</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -3069,11 +3069,14 @@ const ProdHist = {
     /* ENTRADAS por PRODUTO RECEBIDO COMO PAGAMENTO (vendas.usados) */
     this.vendasValidas().forEach(v => (v.usados || []).forEach(u => {
       if (u.produtoId !== id) return;
-      const q = +u.qtd || 1, cu = (u.valorUnit != null ? +u.valorUnit : (+u.valor || 0) / q);
+      const q = +u.qtd || 1;
+      const abateUnit = (u.valorUnit != null ? +u.valorUnit : (+u.valor || 0) / q); // abate do cliente (comercial)
+      const assistUnit = +u.assistUnit || 0;                                        // assistência (custo interno)
+      const custoUnit = Math.round((abateUnit + assistUnit) * 100) / 100;           // custo de aquisição = abate + assistência
       movs.push({
         data: v.data, kind: 'in', cat: 'recebido',
         tipo: 'Produto recebido em pagamento',
-        delta: q, qtd: q, custoUnit: cu, valorTotal: +u.valor || cu * q,
+        delta: q, qtd: q, custoUnit, abateUnit, assistUnit, valorTotal: custoUnit * q,
         vendaId: v.id, numero: this.vNum(v),
         fornecedor: 'Cliente', obs: u.estado ? ('estado: ' + u.estado) : (u.serie ? 'S/N ' + u.serie : ''),
         responsavel: v.usuario || 'Admin'
@@ -3082,6 +3085,9 @@ const ProdHist = {
 
     /* ENTRADAS de p.entradas que NÃO correspondem a uma compra (evita contagem dupla) */
     (p.entradas || []).forEach(e => {
+      // Usado recebido/estornado em troca já é representado pela venda (vendas.usados) e pelo seu estorno.
+      // Ignoramos aqui para não contar a mesma unidade duas vezes no saldo.
+      if (/usado recebido em troca|estorno de usado/i.test(e.tipo || '')) return;
       const q = +e.qtd || 0, cu = +e.custoUnit || 0;
       const k = this.dkey(e.data) + '|' + q + '|' + Math.round(cu);
       if (compraKeys.has(k)) return; // já contabilizada via coleção compras
@@ -3395,7 +3401,8 @@ const ProdHist = {
       det = `<div class="ph-det">
         <span>Recebido na venda <a class="ph-link" onclick="ProdHist.abrirVenda('${m.vendaId}')">${m.numero}</a></span>
         <span>${m.qtd} un</span>
-        ${fin ? `<span>Valor atribuído ${Fmt.brl(m.valorTotal)}</span>` : ''}
+        ${fin ? `<span>Custo de aquisição ${Fmt.brl(m.custoUnit)}</span>` : ''}
+        ${fin && m.assistUnit > 0 ? `<span class="muted">valor ${Fmt.brl(m.abateUnit)} + assistência ${Fmt.brl(m.assistUnit)}</span>` : ''}
         ${m.obs ? `<span class="muted">${esc(m.obs)}</span>` : ''}
       </div>`;
     } else if (m.cat === 'entrada') {
