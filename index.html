@@ -612,6 +612,14 @@ td .muted,.muted{color:var(--txt-3)}
 .usr-sw{display:flex;align-items:center;gap:9px;padding:8px 10px;border:1px solid var(--border);border-radius:9px;cursor:pointer;font-size:13px}
 .usr-sw input{flex:none}
 
+/* ===== Privacidade: ocultar valores financeiros (Vendas do Dia) ===== */
+.vd-eye{padding:7px 10px;line-height:0;display:inline-flex;align-items:center;justify-content:center}
+.vd-eye svg{display:block}
+.vd-eye.on{color:var(--accent,#5b8cff);background:var(--bg-2)}
+.vd-money{transition:opacity .12s ease}
+.money-hidden .vd-money{font-size:0 !important;letter-spacing:0 !important}
+.money-hidden .vd-money::before{content:'••••••';font-size:13px;letter-spacing:2px;color:var(--txt-3);font-weight:700;vertical-align:middle}
+
 </style>
   <script>
     /* Aplica o tema o quanto antes para evitar "flash" ao carregar */
@@ -683,7 +691,7 @@ td .muted,.muted{color:var(--txt-3)}
       <div class="sidebar-foot">
         <div class="sync-pill"><span class="dot"></span> <span id="sync-label">Offline · salvo localmente</span></div>
         <a class="nav-item small" onclick="App.logout()"><span class="ico">⏻</span> Sair</a>
-        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 8.3 · histórico do usado mostra assistência (sem dobrar)</div>
+        <div style="font-size:10.5px;color:var(--txt-3);padding:6px 4px 0;opacity:.8">versão 8.4 · olho de privacidade em Vendas do Dia</div>
       </div>
     </aside>
     <div class="sidebar-overlay" id="sidebar-overlay" onclick="App.toggleSidebar(false)"></div>
@@ -4190,6 +4198,7 @@ Modules.vendasDia = function () {
   <div class="page-head">
     <div><h1>Vendas do Dia</h1><p>Tudo o que foi vendido, por quanto e qual o resultado financeiro</p></div>
     <div class="actions">
+      <button class="btn-ghost vd-eye" id="vd-eye" onclick="Modules.vdPrivToggle()" title="Ocultar/mostrar valores" aria-label="Ocultar ou mostrar valores"></button>
       ${App.canFinance() ? '<button class="btn-ghost" onclick="Modules.vdExportXlsx()">⬇️ Excel</button><button class="btn-ghost" onclick="Modules.vdExportPdf()">🖨️ PDF</button>' : ''}
       <button class="btn-primary" onclick="App.go('pdv')">🛒 Nova venda</button>
     </div>
@@ -4222,6 +4231,32 @@ Modules.vendasDia = function () {
     <div><div class="section-title" id="vd-count">Produtos vendidos</div><div id="vd-table"></div></div>
     <div class="card"><div class="section-title">🏆 Mais vendidos do dia</div><div id="vd-ranking"></div></div>
   </div>`;
+};
+
+/* ===== Privacidade: ocultar valores financeiros (visual apenas, por usuário) ===== */
+Modules.vdM = function (s) { return '<span class="vd-money">' + s + '</span>'; }; // embrulha um valor monetário
+Modules.vdPrivKey = function () {
+  var u = (typeof App !== 'undefined' && App.user && App.user()) || {};
+  return 'rg_vd_priv_' + (u.id || u.nome || 'anon');
+};
+Modules.vdPrivGet = function () { try { return localStorage.getItem(this.vdPrivKey()) === '1'; } catch (e) { return false; } };
+Modules.vdPrivToggle = function () {
+  var agora = !this.vdPrivGet();
+  try { localStorage.setItem(this.vdPrivKey(), agora ? '1' : '0'); } catch (e) {}
+  this.vdApplyPriv();
+};
+Modules.vdApplyPriv = function () {
+  var hidden = this.vdPrivGet();
+  var view = document.getElementById('view');
+  if (view) view.classList.toggle('money-hidden', hidden);
+  var btn = document.getElementById('vd-eye');
+  if (btn) {
+    var open = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+    var off = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+    btn.innerHTML = hidden ? off : open;
+    btn.classList.toggle('on', hidden);
+    btn.title = hidden ? 'Mostrar valores' : 'Ocultar valores';
+  }
 };
 
 Modules.vdPeriodChange = function () {
@@ -4332,11 +4367,11 @@ Modules.vdRender = function () {
         <td class="strong">#${v.numero || v.id.slice(-4)}</td>
         <td>${Fmt.time(v.data)}<div class="muted" style="font-size:11px">${Fmt.date(v.data)}</div></td>
         <td><div style="max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(prodNomes)}">${esc(prodNomes)}</div>${v.cliente ? `<div class="muted" style="font-size:11px">👤 ${esc(v.cliente)}</div>` : ''}</td>
-        <td class="num strong">${Fmt.brl(v.total)}</td>
-        ${canFin ? `<td class="num muted">${Fmt.brl(custoTot)}</td>` : ''}
-        ${canFin ? `<td class="num">${Fmt.brl(lucroBrutoTot)}</td>` : ''}
-        ${canFin ? `<td class="num" style="color:var(--red)">${c.taxaTotal > 0 ? '− ' + Fmt.brl(c.taxaTotal) : '—'}</td>` : ''}
-        ${canFin ? `<td class="num strong" style="color:${c.lucroTotal >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(c.lucroTotal)}</td>` : ''}
+        <td class="num strong">${Modules.vdM(Fmt.brl(v.total))}</td>
+        ${canFin ? `<td class="num muted">${Modules.vdM(Fmt.brl(custoTot))}</td>` : ''}
+        ${canFin ? `<td class="num">${Modules.vdM(Fmt.brl(lucroBrutoTot))}</td>` : ''}
+        ${canFin ? `<td class="num" style="color:var(--red)">${c.taxaTotal > 0 ? '− ' + Modules.vdM(Fmt.brl(c.taxaTotal)) : '—'}</td>` : ''}
+        ${canFin ? `<td class="num strong" style="color:${c.lucroTotal >= 0 ? 'var(--green)' : 'var(--red)'}">${Modules.vdM(Fmt.brl(c.lucroTotal))}</td>` : ''}
         <td><span class="badge b-gray">${esc(pagStr)}</span></td>
         <td>${v.cancelada ? '<span class="badge b-red">Cancelada</span>' : (temPre ? '<span class="badge b-amber">Pré-venda</span>' : '<span class="badge b-green">Concluída</span>')}</td>
       </tr>`;
@@ -4347,12 +4382,12 @@ Modules.vdRender = function () {
       <tbody>${vrows || `<tr><td colspan="${canFin ? 10 : 6}" class="muted" style="text-align:center;padding:24px">Nenhuma venda no período.</td></tr>`}</tbody></table></div>`;
   }
   document.getElementById('vd-kpis').innerHTML =
-    kpi('Faturamento bruto', Fmt.brl(d.fat), null, '💵', '') +
-    (canFin ? kpi('Custo dos produtos', Fmt.brl(d.custoTotal), null, '🏷️', '') : '') +
-    (canFin ? kpi('Taxas de cartão', Fmt.brl(d.taxasCartao), 'descontadas do lucro', '💳', 'red') : '') +
-    (canFin ? kpi('Lucro líquido', Fmt.brl(d.lucroLiquido), 'após taxas de cartão', '💎', 'purple') : '') +
+    kpi('Faturamento bruto', this.vdM(Fmt.brl(d.fat)), null, '💵', '') +
+    (canFin ? kpi('Custo dos produtos', this.vdM(Fmt.brl(d.custoTotal)), null, '🏷️', '') : '') +
+    (canFin ? kpi('Taxas de cartão', this.vdM(Fmt.brl(d.taxasCartao)), 'descontadas do lucro', '💳', 'red') : '') +
+    (canFin ? kpi('Lucro líquido', this.vdM(Fmt.brl(d.lucroLiquido)), 'após taxas de cartão', '💎', 'purple') : '') +
     kpi('Produtos vendidos', Fmt.num(d.qtdProd), 'unidades', '📦', 'blue') +
-    kpi('Ticket médio', Fmt.brl(d.ticket), null, '🎟️', '') +
+    kpi('Ticket médio', this.vdM(Fmt.brl(d.ticket)), null, '🎟️', '') +
     kpi('Vendas realizadas', Fmt.num(d.nVendas), null, '🧾', 'amber');
 
   document.getElementById('vd-count').innerHTML = `Produtos vendidos <span class="muted" style="font-weight:500">${d.items.length} itens · ${Fmt.date(d.start)}${Fmt.date(d.start) !== Fmt.date(d.end) ? ' – ' + Fmt.date(d.end) : ''}</span>`;
@@ -4364,16 +4399,16 @@ Modules.vdRender = function () {
       <td>${esc(i.categoria)}</td>
       <td>${condBadge(i.condicao)}</td>
       <td class="num">${i.qtd}</td>
-      ${canFin ? `<td class="num muted">${Fmt.brl(i.custo)}</td>` : ''}
-      <td class="num strong">${Fmt.brl(i.valor)}</td>
-      ${canFin ? `<td class="num strong" style="color:${i.lucroLiq >= 0 ? 'var(--green)' : 'var(--red)'}" title="Venda: ${Fmt.brl(i.valor)}&#10;Custo: ${Fmt.brl(i.custo)}&#10;Taxa de cartão (rateada): ${Fmt.brl(i.taxaItem)}&#10;Lucro líquido: ${Fmt.brl(i.lucroLiq)}">${Fmt.brl(i.lucroLiq)}${i.semCusto ? ' <span title="Custo não cadastrado — lucro pode estar incorreto" style="color:var(--amber)">⚠</span>' : ''}</td>` : ''}
+      ${canFin ? `<td class="num muted">${Modules.vdM(Fmt.brl(i.custo))}</td>` : ''}
+      <td class="num strong">${Modules.vdM(Fmt.brl(i.valor))}</td>
+      ${canFin ? `<td class="num strong" style="color:${i.lucroLiq >= 0 ? 'var(--green)' : 'var(--red)'}" title="Venda: ${Fmt.brl(i.valor)}&#10;Custo: ${Fmt.brl(i.custo)}&#10;Taxa de cartão (rateada): ${Fmt.brl(i.taxaItem)}&#10;Lucro líquido: ${Fmt.brl(i.lucroLiq)}">${Modules.vdM(Fmt.brl(i.lucroLiq))}${i.semCusto ? ' <span title="Custo não cadastrado — lucro pode estar incorreto" style="color:var(--amber)">⚠</span>' : ''}</td>` : ''}
       <td><span class="badge b-gray">${esc(i.pag)}</span></td>
       <td class="muted">#${i.vendaId.slice(-4)}</td>
     </tr>`).join('');
   document.getElementById('vd-table').innerHTML = `<div class="table-wrap"><table>
     <thead><tr><th>Hora</th><th>Produto</th><th>Categoria</th><th>Condição</th><th class="num">Qtd</th>${canFin ? '<th class="num">Custo</th>' : ''}<th class="num">Venda</th>${canFin ? '<th class="num">Lucro líquido</th>' : ''}<th>Pagto.</th><th>Nº</th></tr></thead>
     <tbody>${rows || '<tr><td colspan="10" class="muted" style="text-align:center;padding:34px">Nenhuma venda no período selecionado.</td></tr>'}</tbody>
-    ${canFin && d.items.length ? `<tfoot><tr style="font-weight:700;border-top:2px solid var(--line)"><td colspan="5">TOTAIS · ${d.qtdProd} un</td><td class="num">${Fmt.brl(d.custoTotal)}</td><td class="num">${Fmt.brl(d.fat)}</td><td class="num" style="color:${d.lucroLiquido >= 0 ? 'var(--green)' : 'var(--red)'}">${Fmt.brl(d.lucroLiquido)}</td><td colspan="2" class="muted" style="font-weight:500">Taxas: ${Fmt.brl(d.taxasCartao)}</td></tr></tfoot>` : ''}
+    ${canFin && d.items.length ? `<tfoot><tr style="font-weight:700;border-top:2px solid var(--line)"><td colspan="5">TOTAIS · ${d.qtdProd} un</td><td class="num">${Modules.vdM(Fmt.brl(d.custoTotal))}</td><td class="num">${Modules.vdM(Fmt.brl(d.fat))}</td><td class="num" style="color:${d.lucroLiquido >= 0 ? 'var(--green)' : 'var(--red)'}">${Modules.vdM(Fmt.brl(d.lucroLiquido))}</td><td colspan="2" class="muted" style="font-weight:500">Taxas: ${Modules.vdM(Fmt.brl(d.taxasCartao))}</td></tr></tfoot>` : ''}
     </table></div>`;
 
   // ----- Pré-vendas / Reservas no período (pedidos com status especial) -----
@@ -4387,8 +4422,8 @@ Modules.vdRender = function () {
         <td>${Fmt.time(v.data)}</td>
         <td>${esc(v.cliente || '—')}</td>
         <td>${esc(PV.produtoResumo(v))}</td>
-        <td class="num strong">${Fmt.brl(v.total)}</td>
-        <td class="num" style="color:var(--green)">${Fmt.brl(PV.pago(v))}</td>
+        <td class="num strong">${Modules.vdM(Fmt.brl(v.total))}</td>
+        <td class="num" style="color:var(--green)">${Modules.vdM(Fmt.brl(PV.pago(v)))}</td>
         <td>${PV.payBadge(v)}</td><td>${PV.entBadge(v)}</td></tr>`).join('');
       pvEl.innerHTML = `<div class="section-title">📋 Pré-vendas do período <span class="muted" style="font-weight:500">${pvs.length} pedido(s) · já contam no faturamento acima; a entrega é que fica pendente</span></div>
         <div class="table-wrap"><table><thead><tr><th>Pedido</th><th>Hora</th><th>Cliente</th><th>Produto</th><th class="num">Total</th><th class="num">Pago</th><th>Pagamento</th><th>Entrega</th></tr></thead><tbody>${prows}</tbody></table></div>`;
@@ -4404,11 +4439,14 @@ Modules.vdRender = function () {
     return `<div style="padding:11px 0;border-bottom:1px solid var(--line-soft)">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
         <div class="lr-title"><b style="color:var(--green)">${idx + 1}º</b> ${esc(r.nome)}</div>
-        <div class="strong" style="white-space:nowrap">${Fmt.brl(r.fat)}</div></div>
+        <div class="strong" style="white-space:nowrap">${Modules.vdM(Fmt.brl(r.fat))}</div></div>
       <div style="display:flex;justify-content:space-between;font-size:11.5px;color:var(--txt-3);margin:5px 0 6px"><span>${r.qtd} un. vendidas</span><span>${Fmt.pct(part)} do dia</span></div>
       <div class="bar-track"><div class="bar-fill" style="width:${part}%"></div></div>
     </div>`;
   }).join('') : '<p class="muted" style="padding:14px 0">Sem dados no período.</p>';
+
+  // aplica a preferência de privacidade (olho) ao final de cada render
+  this.vdApplyPriv();
 };
 
 Modules.vdDetail = function (id) {
